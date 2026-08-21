@@ -145,6 +145,8 @@ public class RpcCall<R> {
 			case RpcErrorCode.INVALID_INVITE_TICKET -> new InvalidInviteTicket(error.getMessage());
 			case RpcErrorCode.FORBIDDEN_NON_CHANNEL_MEMBER -> new ForbiddenNonChannelMemberException(error.getMessage());
 			case RpcErrorCode.FORBIDDEN_BANNED_CHANNEL_MEMBER -> new ForbiddenBannedMemberException(error.getMessage());
+			case RpcErrorCode.CHANNEL_LIMIT_EXCEEDED -> new ChannelLimitExceededException(error.getMessage());
+			case RpcErrorCode.CHANNEL_MEMBER_LIMIT_EXCEEDED -> new ChannelMemberLimitExceededException(error.getMessage());
 
 			default -> new RpcException(error.getCode(), error.getMessage());
 		};

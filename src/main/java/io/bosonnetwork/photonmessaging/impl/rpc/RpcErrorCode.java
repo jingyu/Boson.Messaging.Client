@@ -52,4 +52,6 @@ public final class RpcErrorCode {
 	public static final int INVALID_INVITE_TICKET = -304;
 	public static final int FORBIDDEN_NON_CHANNEL_MEMBER = -305;
 	public static final int FORBIDDEN_BANNED_CHANNEL_MEMBER = -306;
+	public static final int CHANNEL_LIMIT_EXCEEDED = -307;
+	public static final int CHANNEL_MEMBER_LIMIT_EXCEEDED = -308;
 }
