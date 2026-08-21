@@ -2463,11 +2463,15 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			case CHANNEL_MEMBERS_REMOVE -> {
 				List<Id> memberIds = notif.getBody();
 				log.trace("Channel {} members removed: {}", channel.getId(), memberIds);
-				yield repository.getChannelMembers(channel.getId(), memberIds).compose(members -> {
-					if (members.isEmpty())
-						return Future.succeededFuture();
+				yield repository.getChannelMembers(channel.getId(), memberIds).compose(known -> {
+					// The local member rows can be behind this notification: the member join it refers
+					// to may not be applied yet, or may never have arrived. Fall back to the ids the
+					// notification carries, so the removal is always applied and reported - dropping it
+					// would leave the removed member, or this user's own channel contact, behind
+					// forever. Mirrors the CHANNEL_MEMBER_LEAVE handling below.
+					List<Channel.Member> members = resolveNotifiedMembers(known, memberIds);
 
-					if (members.stream().anyMatch(m -> m.getId().equals(getUserId()))) {
+					if (memberIds.contains(getUserId())) {
 						return repository.removeContactLocally(channel.getId()).compose(removed -> {
 							contactCache.synchronous().invalidate(channel.getId());
 							// All user devices receive the 'CHANNEL_MEMBERS_REMOVE' notification.
@@ -2524,6 +2528,24 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				yield Future.succeededFuture();
 			}
 		};
+	}
+
+	// Pairs every member id carried by a channel membership notification with the member record this
+	// client holds for it, synthesizing a placeholder for the ids it does not know about. Keeps a
+	// notification from being dropped only because the local member rows have not caught up yet.
+	static List<Channel.Member> resolveNotifiedMembers(List<Channel.Member> known, List<Id> memberIds) {
+		if (known.size() == memberIds.size())
+			return known;
+
+		Map<Id, Channel.Member> knownById = new HashMap<>(known.size());
+		for (Channel.Member member : known)
+			knownById.put(member.getId(), member);
+
+		List<Channel.Member> members = new ArrayList<>(memberIds.size());
+		for (Id memberId : memberIds)
+			members.add(knownById.getOrDefault(memberId, new ChannelMember(memberId, Channel.Role.MEMBER, 0)));
+
+		return members;
 	}
 
 	private Future<Void> applyContactSync(ContactSync contactSync) {

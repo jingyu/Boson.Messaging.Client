@@ -38,6 +38,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import org.jspecify.annotations.Nullable;
 
 import io.bosonnetwork.Id;
@@ -82,6 +83,9 @@ public class PhotonChannel extends PhotonContact implements Channel {
 	// In-flight load, used to dedupe concurrent loadMembers() calls so they share one DB load
 	// instead of each triggering a separate query. Confined to the Verticle's event loop.
 	private @Nullable Future<Void> membersLoading;
+	// Bumped by invalidateMembers(), so a load that is already running when the members are
+	// invalidated does not install the snapshot it read before the change.
+	private int membersEpoch;
 
 	// Constructor for database OR mapping
 	protected PhotonChannel(Id id, byte[] sessionKey, Id ownerId, Permission permission, String name, @Nullable String notice,
@@ -175,21 +179,51 @@ public class PhotonChannel extends PhotonContact implements Channel {
 		if (_members != null)
 			return Future.succeededFuture();
 
-		if (membersLoader == null)
+		Function<Id, Future<List<ChannelMember>>> loader = membersLoader;
+		if (loader == null)
 			return Future.failedFuture(new IllegalStateException("Members loader not set"));
 
-		// Reuse an in-flight load if one is already running; clear it on completion so a later
+		// Reuse an in-flight load if one is already running; cleared on completion so a later
 		// reload (e.g.; after invalidateMembers()) or a retry-after-failure can run again.
 		if (membersLoading != null)
 			return membersLoading;
 
-		membersLoading = (Future<Void>) membersLoader.apply(getId())
-				.<@Nullable Void>map(ml -> {
-					setMembers(ml);
-					return null;
-				})
-				.andThen(ar -> membersLoading = null);
-		return membersLoading;
+		int epoch = membersEpoch;
+		Promise<Void> promise = Promise.promise();
+		Future<Void> loading = promise.future();
+		// Publish the in-flight future BEFORE starting the load: a loader that hands back an
+		// already completed future runs the completion handler below - including its reset -
+		// inline, so assigning the built chain afterwards would leave a completed future parked
+		// here forever. The next call after an invalidateMembers() would then hand out that
+		// completed future without loading anything, and the caller would see the members as
+		// still missing.
+		membersLoading = loading;
+		loader.apply(getId()).onComplete(ar -> {
+			if (membersLoading == loading)
+				membersLoading = null;
+
+			if (ar.failed()) {
+				promise.fail(ar.cause());
+				return;
+			}
+
+			if (epoch != membersEpoch) {
+				// Invalidated while this load was running: the snapshot it read may predate the
+				// change that triggered the invalidation, so drop it and load again.
+				tryLoadMembers().onComplete(promise);
+				return;
+			}
+
+			try {
+				setMembers(ar.result());
+			} catch (RuntimeException e) {
+				promise.fail(e);
+				return;
+			}
+
+			promise.complete();
+		});
+		return loading;
 	}
 
 	void setMembers(Collection<ChannelMember> members) {
@@ -211,6 +245,7 @@ public class PhotonChannel extends PhotonContact implements Channel {
 
 	void invalidateMembers() {
 		_members = null;
+		membersEpoch++;
 	}
 
 	private Map<Id, ChannelMember> getMembersMap() {
