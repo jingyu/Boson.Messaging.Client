@@ -1680,7 +1680,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			URI serviceEndpoint = Objects.requireNonNull(this.serviceEndpoint, "INTERNAL ERROR: inconsistent state - serviceEndpoint not initialized");
 			if (Objects.equals("mqtts", serviceEndpoint.getScheme())) {
 				options.setSsl(true)
-						.setEnabledSecureTransportProtocols(Set.of("TLSv1.3"))
+						.setEnabledSecureTransportProtocols(Set.of("TLSv1.2", "TLSv1.3"))
 						.setTrustOptions(TrustOptions.wrap(new HybridTrustManager(homePeerId.toString(), homePeerId.bytesUnsafe())));
 			}
 
