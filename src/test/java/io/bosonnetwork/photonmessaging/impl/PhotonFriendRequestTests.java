@@ -116,7 +116,7 @@ public class PhotonFriendRequestTests {
 		long now = System.currentTimeMillis();
 
 		PhotonFriendRequest fresh = new PhotonFriendRequest(Id.random(), Id.random(), "Hello",
-				now - WEEK, now - WEEK + 60_000);
+				now - WEEK + 60_000, now - WEEK + 60_000);
 		assertFalse(fresh.isExpired());
 
 		PhotonFriendRequest stale = new PhotonFriendRequest(Id.random(), Id.random(), "Hello",
@@ -125,13 +125,19 @@ public class PhotonFriendRequestTests {
 	}
 
 	@Test
-	void expiryCountsFromTheLastUpdate() {
+	void expiryCountsFromTheSendTimeNotTheArrival() {
 		long now = System.currentTimeMillis();
 
-		// Created long ago, but updated recently: still pending.
-		PhotonFriendRequest fr = new PhotonFriendRequest(Id.random(), Id.random(), "Hello",
-				now - 2 * WEEK, now - 60_000);
-		assertFalse(fr.isExpired());
+		// Sent eight days ago, received a minute ago (the recipient was offline): expired, as it is
+		// on the sender's side, so both sides agree.
+		PhotonFriendRequest late = new PhotonFriendRequest(Id.random(), Id.random(), "Hello",
+				now - WEEK - TimeUnit.DAYS.toMillis(1), now - 60_000);
+		assertTrue(late.isExpired());
+
+		// Sent a day ago, whenever it arrived: still pending.
+		PhotonFriendRequest recent = new PhotonFriendRequest(Id.random(), Id.random(), "Hello",
+				now - TimeUnit.DAYS.toMillis(1), now);
+		assertFalse(recent.isExpired());
 	}
 
 	@Test
@@ -175,5 +181,43 @@ public class PhotonFriendRequestTests {
 
 		fr.accept(2000);
 		assertFalse(fr.isExpiredAt(1000 + 2 * WEEK));
+	}
+
+	@Test
+	void receivedRequestKeepsTheSendersTimeWhenNotInTheFuture() {
+		Id sender = Id.random();
+		long now = 1_000_000;
+
+		// Created when sent, updated when received.
+		PhotonFriendRequest past = PhotonFriendRequest.received(sender, sender, "Hello", now - 5000, now);
+		assertEquals(now - 5000, past.getCreatedAt());
+		assertEquals(now, past.getUpdatedAt());
+		assertFalse(past.isOutgoing());
+		assertFalse(past.isAccepted());
+
+		PhotonFriendRequest exact = PhotonFriendRequest.received(sender, sender, "Hello", now, now);
+		assertEquals(now, exact.getCreatedAt());
+		assertEquals(now, exact.getUpdatedAt());
+	}
+
+	@Test
+	void receivedRequestDatedInTheFutureStartsNow() {
+		Id sender = Id.random();
+		long now = 1_000_000;
+
+		// A sender clock a year ahead must not push the expiry out by a year.
+		PhotonFriendRequest future = PhotonFriendRequest.received(sender, sender, "Hello",
+				now + TimeUnit.DAYS.toMillis(365), now);
+		assertEquals(now, future.getCreatedAt());
+		assertEquals(now, future.getUpdatedAt());
+		assertFalse(future.isExpiredAt(now + WEEK - 1));
+		assertTrue(future.isExpiredAt(now + WEEK));
+	}
+
+	@Test
+	void notInTheFutureCapsAtNow() {
+		assertEquals(10, PhotonFriendRequest.notInTheFuture(10, 20));
+		assertEquals(20, PhotonFriendRequest.notInTheFuture(20, 20));
+		assertEquals(20, PhotonFriendRequest.notInTheFuture(30, 20));
 	}
 }

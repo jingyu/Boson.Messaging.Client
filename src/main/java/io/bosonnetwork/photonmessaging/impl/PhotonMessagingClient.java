@@ -540,6 +540,12 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			if (fr.isExpired())
 				return Future.failedFuture(new IllegalStateException("Friend request has expired"));
 
+			return contact(userId).map(contact -> {
+				if (contact != null && contact.isBlocked())
+					throw new IllegalStateException("Cannot accept a friend request from a blocked user");
+				return fr;
+			});
+		}).compose(fr -> {
 			PhotonFriendRequest request = (PhotonFriendRequest) fr;
 			Signature.KeyPair sessionKeypair = Signature.KeyPair.random();
 			byte[] sessionKey = sessionKeypair.privateKey().bytes();
@@ -607,8 +613,23 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 	}
 
 	private Future<Contact> addFriendInternal(Id id, byte[] sessionKey, @Nullable String remark) {
-		Friend friend = new Friend(id, sessionKey, remark);
-		ContactMutation mutation = ContactMutation.add(contactsRevision, friend.toOpaque(selfContext));
+		return contact(id).compose(existing -> {
+			// A user known only as an AUTO contact (one blocked at some point) becomes the friend in
+			// place, keeping the remark, muted and blocked state set on them; anyone else is added.
+			if (existing != null && existing.getType() == Contact.Type.AUTO) {
+				Friend friend = new Friend(id, sessionKey, null,
+						remark != null ? remark : existing.getRemark().orElse(null),
+						existing.getTags().orElse(null), existing.isMuted(), existing.isBlocked(),
+						existing.getCreatedAt(), System.currentTimeMillis(), 0);
+				return addFriendInternal(friend, ContactMutation.update(contactsRevision, friend.toOpaque(selfContext)));
+			}
+
+			Friend friend = new Friend(id, sessionKey, remark);
+			return addFriendInternal(friend, ContactMutation.add(contactsRevision, friend.toOpaque(selfContext)));
+		});
+	}
+
+	private Future<Contact> addFriendInternal(Friend friend, ContactMutation mutation) {
 		RpcCall<Integer> call = RpcCall.contactMutate(mutation);
 		return sendRpcCall(homePeerId, call).compose(revision -> {
 			Contact contact = friend.edit().setRevision(revision).build();
@@ -636,6 +657,56 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		Promise<Contact> promise = Promise.promise();
 		runOnContext(v -> addFriendInternal(id, sk, remark).onComplete(promise));
 		return ContextualFuture.of(promise.future());
+	}
+
+	@Override
+	public ContextualFuture<Contact> blockUser(Id id) {
+		Objects.requireNonNull(id, "id");
+		runningCheck();
+
+		if (id.equals(getUserId()))
+			return ContextualFuture.failedFuture(new IllegalArgumentException("Cannot block yourself"));
+
+		Promise<Contact> promise = Promise.promise();
+		runOnContext(v -> blockUserInternal(id).onComplete(promise));
+		return ContextualFuture.of(promise.future());
+	}
+
+	private Future<Contact> blockUserInternal(Id id) {
+		return contact(id).compose(existing -> {
+			if (existing != null) {
+				if (existing.getType() == Contact.Type.CHANNEL)
+					return Future.failedFuture(new IllegalArgumentException("Not a user: " + id + " is a channel"));
+
+				if (existing.isBlocked())
+					return Future.succeededFuture(existing);
+
+				// A contact already: blocking is the contact's own blocked state, updated and synced like
+				// any other contact edit.
+				PhotonContact blocked = (PhotonContact) existing.edit().setBlocked(true).build();
+				ContactMutation mutation = ContactMutation.update(contactsRevision, blocked.toOpaque(selfContext));
+				return sendRpcCall(homePeerId, RpcCall.contactMutate(mutation)).compose(revision -> {
+					Contact updated = ((ContactEditor) blocked.edit()).setRevision(revision).build();
+					return repository.putContacts(revision, List.of(updated)).map(vv -> {
+						contactsRevision = revision;
+						contactCache.synchronous().invalidate(id);
+						return updated;
+					});
+				});
+			}
+
+			// Not a contact: an AUTO contact carries the blocked state. It has no session key, so it can
+			// never be mistaken for a friend, and it syncs to the user's other devices like any contact.
+			long now = System.currentTimeMillis();
+			AutoContact blocked = new AutoContact(id, null, null, null, false, true, now, now);
+			ContactMutation mutation = ContactMutation.add(contactsRevision, blocked.toOpaque(selfContext));
+			return sendRpcCall(homePeerId, RpcCall.contactMutate(mutation)).compose(revision ->
+					repository.putContact(revision, blocked).map(vv -> {
+						contactsRevision = revision;
+						contactCache.synchronous().invalidate(id);
+						return (Contact) blocked;
+					}));
+		});
 	}
 
 	@Override
@@ -1517,10 +1588,19 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				}
 
 				if (contact.isBlocked()) {
-					log.debug("Received a {}} from blocked contact {}, ignored", type, from);
+					log.debug("Received a {} from blocked contact {}, ignored", type, from);
 					return Future.failedFuture("Received a message from blocked contact");
 				}
 
+				if (contact.getType() == Contact.Type.AUTO) {
+					// Known (e.g. blocked once) but not a friend: there is no conversation with them.
+					log.debug("Received a {} from {} who is not a friend, ignored", type, from);
+					return Future.failedFuture("Received a message from a user who is not a friend");
+				}
+
+				// A blocked user's messages in a channel are still delivered: the channel is a shared
+				// conversation, and dropping one member's messages would leave holes (replies without
+				// what they answer) and a view that differs from the other members'.
 				return getOrCreateConversation(conversationId).compose(conv -> {
 					try {
 						SessionContext sc = conv.getSessionContext();
@@ -2097,8 +2177,8 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 						log.trace("Friend request sent to {}", message.getRecipient());
 						// Replaces whatever record this device keeps for the user, as on the sending
 						// device; the week to expiry counts from the moment it was sent.
-						PhotonFriendRequest fr = new PhotonFriendRequest(message.getRecipient(), getUserId(), hello,
-								handshake.getTimestamp(), handshake.getTimestamp());
+						PhotonFriendRequest fr = PhotonFriendRequest.received(message.getRecipient(), getUserId(), hello,
+								handshake.getTimestamp(), System.currentTimeMillis());
 						yield repository.putFriendRequest(fr);
 					}
 
@@ -2114,7 +2194,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 							}
 
 							PhotonFriendRequest request = (PhotonFriendRequest) fr;
-							request.accept(handshake.getTimestamp());
+							request.accept(PhotonFriendRequest.notInTheFuture(handshake.getTimestamp(), System.currentTimeMillis()));
 							return repository.putFriendRequest(request);
 						});
 					}
@@ -2178,6 +2258,11 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				log.trace("Received a friend request from {}: {}", from, hello);
 				yield contact(from).compose(contact -> {
 					if (contact != null) {
+						if (contact.isBlocked()) {
+							log.debug("Received a friend request from blocked user {}, ignored", from);
+							return Future.succeededFuture();
+						}
+
 						if (contact.getType() == Contact.Type.FRIEND) {
 							log.warn("Received a friend request from a friend {}, ignored", contact.getId());
 							return Future.succeededFuture();
@@ -2191,9 +2276,10 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 
 					// Replaces whatever record is kept for the sender, whatever its direction or state.
 					// The week to expiry counts from the moment it was sent, as on the sender's side, so
-					// both sides expire the request together however late it arrives.
-					PhotonFriendRequest fr = new PhotonFriendRequest(from, from, hello,
-							handshake.getTimestamp(), handshake.getTimestamp());
+					// both sides expire the request together however late it arrives - but never from a
+					// time in the future, which would stretch it out.
+					PhotonFriendRequest fr = PhotonFriendRequest.received(from, from, hello,
+							handshake.getTimestamp(), System.currentTimeMillis());
 					return repository.putFriendRequest(fr).andThen(ar -> {
 						listeners.onFriendRequest(from, hello);
 					});
@@ -2216,7 +2302,9 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 						return Future.succeededFuture();
 					}
 
-					if (request.isExpiredAt(handshake.getTimestamp())) {
+					// The acceptance time is the other side's clock too; one in the future counts as now.
+					long acceptedAt = PhotonFriendRequest.notInTheFuture(handshake.getTimestamp(), System.currentTimeMillis());
+					if (request.isExpiredAt(acceptedAt)) {
 						log.warn("Received a friend request accept from {} after the request expired, ignored", from);
 						return Future.succeededFuture();
 					}
@@ -2233,10 +2321,15 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 							return Future.succeededFuture();
 						}
 
-						request.accept(handshake.getTimestamp());
+						if (contact != null && contact.isBlocked()) {
+							log.debug("Received a friend request accept from blocked user {}, ignored", from);
+							return Future.succeededFuture();
+						}
+
+						request.accept(acceptedAt);
 						log.trace("Updating friend request status to accepted: {}", from);
 
-						if (contact != null) {
+						if (contact != null && contact.getType() == Contact.Type.FRIEND) {
 							// Another device of this user got here first and the new friend has already
 							// been synced to this one; only the request record is left to update.
 							log.trace("{} is already a friend, only updating the friend request", from);

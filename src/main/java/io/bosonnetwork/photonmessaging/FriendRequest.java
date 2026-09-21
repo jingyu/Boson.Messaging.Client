@@ -91,7 +91,11 @@ public interface FriendRequest {
 	boolean isExpired();
 
 	/**
-	 * Returns the timestamp when the friend request was created.
+	 * Returns the timestamp when the friend request was sent, the same on both sides.
+	 * <p>
+	 * The week to expiry counts from it. For a received request it is the sender's time, never later
+	 * than the moment it arrived.
+	 * </p>
 	 *
 	 * @return the creation timestamp in milliseconds since the epoch.
 	 */
@@ -105,7 +109,8 @@ public interface FriendRequest {
 	long getAcceptedAt();
 
 	/**
-	 * Returns the timestamp when the friend request was last updated.
+	 * Returns the timestamp when this record last changed on this device: when the request was sent
+	 * or received, or when it was accepted.
 	 *
 	 * @return the update timestamp in milliseconds since the epoch.
 	 */

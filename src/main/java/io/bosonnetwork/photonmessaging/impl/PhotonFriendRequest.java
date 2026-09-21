@@ -57,6 +57,38 @@ public class PhotonFriendRequest implements FriendRequest {
 		this.acceptedAt = acceptedAt;
 	}
 
+	/**
+	 * Creates the record for a request received in a handshake.
+	 * <p>
+	 * The creation time is when the sender sent it, and the week to expiry counts from it on both
+	 * sides; the update time is when this device received it. The send time comes from the sender's
+	 * clock, and one ahead of this device's would push the expiry out (or, far enough, keep the request
+	 * from ever expiring), so a send time in the future is replaced with {@code now}; one not in the
+	 * future is kept as sent.
+	 * </p>
+	 *
+	 * @param userId the other user of the request.
+	 * @param initiatorId the user who sent it.
+	 * @param hello the greeting, if any.
+	 * @param sentAt the time the sender stamped on the request.
+	 * @param now this device's current time, the time it was received.
+	 * @return the pending request.
+	 */
+	protected static PhotonFriendRequest received(Id userId, Id initiatorId, @Nullable String hello, long sentAt, long now) {
+		return new PhotonFriendRequest(userId, initiatorId, hello, notInTheFuture(sentAt, now), now);
+	}
+
+	/**
+	 * Returns {@code time}, or {@code now} if {@code time} is later.
+	 *
+	 * @param time a time from another device's clock.
+	 * @param now this device's current time.
+	 * @return the time, never later than {@code now}.
+	 */
+	protected static long notInTheFuture(long time, long now) {
+		return Math.min(time, now);
+	}
+
 	@Override
 	public Id getUserId() {
 		return userId;
@@ -96,12 +128,18 @@ public class PhotonFriendRequest implements FriendRequest {
 
 	/**
 	 * Checks whether the request had expired at the given time, e.g. when the other side acted on it.
+	 * <p>
+	 * The week counts from the creation time, the moment the request was sent, which both sides agree
+	 * on; the update time is local (when this device received or changed the record) and would let the
+	 * two sides expire at different times. A new request replaces the record with a new creation time,
+	 * so resending starts a new week.
+	 * </p>
 	 *
 	 * @param time the time to check, in milliseconds since the epoch.
 	 * @return {@code true} if the request was still pending and past its expiry at {@code time}.
 	 */
 	protected boolean isExpiredAt(long time) {
-		return !accepted && (time - updatedAt >= EXPIRATION);
+		return !accepted && (time - createdAt >= EXPIRATION);
 	}
 
 	@Override

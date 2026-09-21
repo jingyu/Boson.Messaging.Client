@@ -490,6 +490,27 @@ public interface MessagingClient {
 	 */
 	CompletableFuture<Contact> addFriend(Id id, byte[] sessionKey, @Nullable String remark);
 
+	/**
+	 * Blocks a user, whether or not they are a contact.
+	 * <p>
+	 * Blocking uses the contact's existing blocked state: a friend is updated to blocked, and a user who
+	 * is not a contact yet gets a new {@link Contact.Type#AUTO AUTO} contact marked blocked. Either way
+	 * the change goes through contact synchronization, so all of the user's devices honour it. From
+	 * then on, friend requests, friend request acceptances and direct messages from the blocked user are
+	 * dropped. Their messages in channels are still delivered, since a channel is a conversation shared
+	 * with its other members. Friend request records already stored are left as they are.
+	 * </p>
+	 * <p>
+	 * Unblocking is an ordinary contact update: {@code updateContact(contact.edit().setBlocked(false).build())}.
+	 * </p>
+	 *
+	 * @param id the identifier of the user to block.
+	 * @return a {@link CompletableFuture} that completes with the blocked contact (the existing one if
+	 *         the user was already blocked), or fails with {@link IllegalArgumentException} if the id is
+	 *         the current user's own or a channel's.
+	 */
+	CompletableFuture<Contact> blockUser(Id id);
+
 	////////////////////////////////////////////////////////////////////////////
 	// channel APIs
 	////////////////////////////////////////////////////////////////////////////
