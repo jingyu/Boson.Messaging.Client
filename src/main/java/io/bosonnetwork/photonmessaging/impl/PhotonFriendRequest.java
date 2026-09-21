@@ -22,6 +22,8 @@
 
 package io.bosonnetwork.photonmessaging.impl;
 
+import org.jspecify.annotations.Nullable;
+
 import io.bosonnetwork.Id;
 import io.bosonnetwork.photonmessaging.FriendRequest;
 
@@ -30,21 +32,21 @@ public class PhotonFriendRequest implements FriendRequest {
 
 	private final Id userId;
 	private final Id initiatorId;
-	private final String hello;
+	private final @Nullable String hello;
 	private final long createdAt;
 	private long updatedAt;
 	private boolean accepted;
 	private long acceptedAt;
 
-	protected PhotonFriendRequest(Id userId, Id initiatorId, String hello) {
+	protected PhotonFriendRequest(Id userId, Id initiatorId, @Nullable String hello) {
 		this(userId, initiatorId, hello, System.currentTimeMillis(), 0);
 	}
 
-	protected PhotonFriendRequest(Id userId, Id initiatorId, String hello, long createdAt, long updatedAt) {
+	protected PhotonFriendRequest(Id userId, Id initiatorId, @Nullable String hello, long createdAt, long updatedAt) {
 		this(userId, initiatorId, hello, createdAt, updatedAt, false, 0);
 	}
 
-	protected PhotonFriendRequest(Id userId, Id initiatorId, String hello, long createdAt,
+	protected PhotonFriendRequest(Id userId, Id initiatorId, @Nullable String hello, long createdAt,
 	                              long updatedAt, boolean accepted, long acceptedAt) {
 		this.userId = userId;
 		this.initiatorId = initiatorId;
@@ -66,7 +68,7 @@ public class PhotonFriendRequest implements FriendRequest {
 	}
 
 	@Override
-	public String getHello() {
+	public @Nullable String getHello() {
 		return hello;
 	}
 
@@ -89,7 +91,17 @@ public class PhotonFriendRequest implements FriendRequest {
 
 	@Override
 	public boolean isExpired() {
-		return !accepted && (System.currentTimeMillis() - updatedAt >= EXPIRATION);
+		return isExpiredAt(System.currentTimeMillis());
+	}
+
+	/**
+	 * Checks whether the request had expired at the given time, e.g. when the other side acted on it.
+	 *
+	 * @param time the time to check, in milliseconds since the epoch.
+	 * @return {@code true} if the request was still pending and past its expiry at {@code time}.
+	 */
+	protected boolean isExpiredAt(long time) {
+		return !accepted && (time - updatedAt >= EXPIRATION);
 	}
 
 	@Override

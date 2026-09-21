@@ -375,8 +375,6 @@ class MessagingRepository {
 		};
 	}
 
-	// hello is a nullable column; the ctor parameter is not annotated @Nullable but accepts null.
-	@SuppressWarnings("NullAway")
 	private PhotonFriendRequest toFriendRequest(StoredFriendRequest r) {
 		return new PhotonFriendRequest(r.id(), r.initiator(), r.hello(), r.createdAt(), r.updatedAt(),
 				r.accepted(), r.acceptedAt());

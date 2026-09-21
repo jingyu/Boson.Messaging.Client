@@ -277,7 +277,11 @@ public interface MessagingStore {
 	// ------------------------------------------------------------------------
 
 	/**
-	 * Inserts or updates a friend request.
+	 * Inserts a friend request, or replaces the one already stored for the same user.
+	 * <p>
+	 * A replacement overwrites every field, the initiator and the creation time included: there is
+	 * one record per user, and a new request replaces the old one whatever its direction or state.
+	 * </p>
 	 *
 	 * @param friendRequest the friend request to store
 	 * @return a future completing when the friend request is stored

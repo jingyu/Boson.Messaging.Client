@@ -595,7 +595,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		runningCheck();
 
 		if (userIds.isEmpty())
-			return ContextualFuture.succeededFuture(true);
+			return ContextualFuture.succeededFuture(false);
 
 		return ContextualFuture.of(repository.removeFriendRequests(userIds));
 	}
@@ -2095,8 +2095,10 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 					case FRIEND_REQUEST -> {
 						String hello = handshake.getBody();
 						log.trace("Friend request sent to {}", message.getRecipient());
+						// Replaces whatever record this device keeps for the user, as on the sending
+						// device; the week to expiry counts from the moment it was sent.
 						PhotonFriendRequest fr = new PhotonFriendRequest(message.getRecipient(), getUserId(), hello,
-								handshake.getTimestamp(), System.currentTimeMillis());
+								handshake.getTimestamp(), handshake.getTimestamp());
 						yield repository.putFriendRequest(fr);
 					}
 
@@ -2106,8 +2108,8 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 							// Trying to update the existing friend request status.
 							// **DO NOT** add the contact here; the accepting device is responsible for adding
 							// the new contact and broadcasting the change via a CONTACT_MUTATE notification.
-							if (fr == null) {
-								log.warn("No friend request to {}, ignored", message.getRecipient());
+							if (fr == null || fr.isOutgoing() || fr.isAccepted()) {
+								log.warn("No pending friend request from {}, ignored", message.getRecipient());
 								return Future.succeededFuture();
 							}
 
@@ -2187,8 +2189,11 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 						}
 					}
 
+					// Replaces whatever record is kept for the sender, whatever its direction or state.
+					// The week to expiry counts from the moment it was sent, as on the sender's side, so
+					// both sides expire the request together however late it arrives.
 					PhotonFriendRequest fr = new PhotonFriendRequest(from, from, hello,
-							handshake.getTimestamp(), System.currentTimeMillis());
+							handshake.getTimestamp(), handshake.getTimestamp());
 					return repository.putFriendRequest(fr).andThen(ar -> {
 						listeners.onFriendRequest(from, hello);
 					});
@@ -2197,35 +2202,47 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 
 			case FRIEND_REQUEST_ACCEPT -> {
 				log.trace("Received a friend request accept from {}", from);
-				yield contact(from).compose(contact -> {
-					if (contact != null) {
-						if (contact.getType() == Contact.Type.FRIEND) {
-							log.warn("Received a friend request accept from a friend {}, ignored", contact.getId());
-							return Future.succeededFuture();
-						}
+				yield repository.getFriendRequest(from).compose(fr -> {
+					if (fr == null || !fr.isOutgoing()) {
+						log.warn("Received a friend request accept without matched request from: {}, ignored", from);
+						return Future.succeededFuture();
+					}
 
-						if (contact.getType() == Contact.Type.CHANNEL) {
+					// Accepted and expired are final: a repeated acceptance changes nothing, and neither
+					// does one made after the request had expired.
+					PhotonFriendRequest request = (PhotonFriendRequest) fr;
+					if (request.isAccepted()) {
+						log.trace("Friend request to {} is already accepted, ignored", from);
+						return Future.succeededFuture();
+					}
+
+					if (request.isExpiredAt(handshake.getTimestamp())) {
+						log.warn("Received a friend request accept from {} after the request expired, ignored", from);
+						return Future.succeededFuture();
+					}
+
+					byte[] sessionKey = handshake.getBody();
+					if (sessionKey.length != Signature.PrivateKey.BYTES) {
+						log.warn("Received a friend request accept with invalid session key from: {}, ignored", from);
+						return Future.succeededFuture();
+					}
+
+					return contact(from).compose(contact -> {
+						if (contact != null && contact.getType() == Contact.Type.CHANNEL) {
 							log.error("INTERNAL ERROR!!! Received a friend request accept from a channel {}, ignored", contact.getId());
 							return Future.succeededFuture();
 						}
-					}
 
-					return repository.getFriendRequest(from).compose(fr -> {
-						if (fr == null || fr.getInitiatorId().equals(from)) {
-							log.warn("Received a friend request accept without matched request from: {}, ignored", from);
-							return Future.succeededFuture();
-						}
-
-						byte[] sessionKey = handshake.getBody();
-						if (sessionKey.length != Signature.PrivateKey.BYTES) {
-							log.warn("Received a friend request accept with invalid session key from: {}, ignored", from);
-							return Future.succeededFuture();
-						}
-
-						PhotonFriendRequest request = (PhotonFriendRequest) fr;
-						request.accept();
-
+						request.accept(handshake.getTimestamp());
 						log.trace("Updating friend request status to accepted: {}", from);
+
+						if (contact != null) {
+							// Another device of this user got here first and the new friend has already
+							// been synced to this one; only the request record is left to update.
+							log.trace("{} is already a friend, only updating the friend request", from);
+							return repository.putFriendRequest(request);
+						}
+
 						return repository.putFriendRequest(request).andThen(rar -> {
 							if (rar.failed())
 								log.error("Failed to update the friend request status", rar.cause());

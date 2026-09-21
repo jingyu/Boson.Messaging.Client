@@ -1,6 +1,7 @@
 package io.bosonnetwork.photonmessaging.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -523,6 +524,132 @@ public class DatabaseMessagingRepositoryTests {
 						assertTrue(contact instanceof Friend);
 						assertEquals(userId, contact.getId());
 					});
+					context.completeNow();
+				}));
+	}
+
+	@ParameterizedTest(name = "{0}")
+	@MethodSource("databaseProvider")
+	@Timeout(value = 10, timeUnit = TimeUnit.SECONDS)
+	void testFriendRequestRoundTrip(String name, MessagingRepository repo, VertxTestContext context) {
+		Id userId = Id.random();
+		Id initiatorId = Id.random();
+		PhotonFriendRequest request = new PhotonFriendRequest(userId, initiatorId, "Hello", 1000, 2000);
+		PhotonFriendRequest noHello = new PhotonFriendRequest(Id.random(), initiatorId, null, 1500, 1500);
+
+		repo.getFriendRequest(userId)
+				.compose(missing -> {
+					context.verify(() -> assertNull(missing));
+					return repo.putFriendRequest(request);
+				})
+				.compose(v -> repo.putFriendRequest(noHello))
+				.compose(v -> repo.getFriendRequest(userId))
+				.compose(fr -> {
+					context.verify(() -> {
+						assertNotNull(fr);
+						assertEquals(userId, fr.getUserId());
+						assertEquals(initiatorId, fr.getInitiatorId());
+						assertTrue(fr.isOutgoing());
+						assertEquals("Hello", fr.getHello());
+						assertEquals(1000, fr.getCreatedAt());
+						assertEquals(2000, fr.getUpdatedAt());
+						assertFalse(fr.isAccepted());
+						assertEquals(0, fr.getAcceptedAt());
+					});
+					return repo.getFriendRequest(noHello.getUserId());
+				})
+				.compose(fr -> {
+					context.verify(() -> {
+						assertNotNull(fr);
+						assertNull(fr.getHello());
+					});
+					// Putting an existing request again updates it in place.
+					request.accept(3000);
+					return repo.putFriendRequest(request);
+				})
+				.compose(v -> repo.getFriendRequest(userId))
+				.compose(fr -> {
+					context.verify(() -> {
+						assertNotNull(fr);
+						assertTrue(fr.isAccepted());
+						assertEquals(3000, fr.getAcceptedAt());
+						assertEquals(3000, fr.getUpdatedAt());
+						assertEquals(1000, fr.getCreatedAt());
+						assertEquals("Hello", fr.getHello());
+					});
+					// A new request from the other side replaces the accepted outgoing one entirely:
+					// direction, greeting, times and state.
+					return repo.putFriendRequest(new PhotonFriendRequest(userId, userId, "Hello back", 5000, 5000));
+				})
+				.compose(v -> repo.getFriendRequest(userId))
+				.compose(fr -> {
+					context.verify(() -> {
+						assertNotNull(fr);
+						assertEquals(userId, fr.getInitiatorId());
+						assertFalse(fr.isOutgoing());
+						assertEquals("Hello back", fr.getHello());
+						assertEquals(5000, fr.getCreatedAt());
+						assertEquals(5000, fr.getUpdatedAt());
+						assertFalse(fr.isAccepted());
+						assertEquals(0, fr.getAcceptedAt());
+					});
+					return repo.getFriendRequests();
+				})
+				.onComplete(context.succeeding(list -> {
+					// Still one record per user.
+					context.verify(() -> assertEquals(1,
+							list.stream().filter(fr -> fr.getUserId().equals(userId)).count()));
+					context.completeNow();
+				}));
+	}
+
+	@ParameterizedTest(name = "{0}")
+	@MethodSource("databaseProvider")
+	@Timeout(value = 10, timeUnit = TimeUnit.SECONDS)
+	void testFriendRequestListAndRemoval(String name, MessagingRepository repo, VertxTestContext context) {
+		Id initiatorId = Id.random();
+		List<Id> ids = List.of(Id.random(), Id.random(), Id.random(), Id.random());
+		List<Future<Void>> puts = new ArrayList<>();
+		for (int i = 0; i < ids.size(); i++)
+			puts.add(repo.putFriendRequest(new PhotonFriendRequest(ids.get(i), initiatorId, "Hello #" + i, 1000L * (i + 1), 0)));
+
+		Future.all(puts)
+				.compose(v -> repo.getFriendRequests())
+				.compose(list -> {
+					// Newest first.
+					context.verify(() -> assertEquals(List.of(ids.get(3), ids.get(2), ids.get(1), ids.get(0)),
+							list.stream().map(FriendRequest::getUserId).toList()));
+					return repo.removeFriendRequest(ids.get(0));
+				})
+				.compose(removed -> {
+					context.verify(() -> assertTrue(removed));
+					return repo.removeFriendRequest(ids.get(0));
+				})
+				.compose(removed -> {
+					context.verify(() -> assertFalse(removed));
+					return repo.removeFriendRequests(List.of(ids.get(1), Id.random()));
+				})
+				.compose(removed -> {
+					context.verify(() -> assertTrue(removed));
+					return repo.removeFriendRequests(List.of(ids.get(1), Id.random()));
+				})
+				.compose(removed -> {
+					context.verify(() -> assertFalse(removed));
+					// Nothing asked, nothing removed.
+					return repo.removeFriendRequests(List.of());
+				})
+				.compose(removed -> {
+					context.verify(() -> assertFalse(removed));
+					return repo.getFriendRequests();
+				})
+				.compose(list -> {
+					context.verify(() -> assertEquals(List.of(ids.get(3), ids.get(2)),
+							list.stream().map(FriendRequest::getUserId).toList()));
+					return repo.clearFriendRequests();
+				})
+				.compose(v -> repo.getFriendRequests())
+				.onComplete(context.succeeding(list -> {
+					context.verify(() -> assertTrue(list.isEmpty()));
 					context.completeNow();
 				}));
 	}

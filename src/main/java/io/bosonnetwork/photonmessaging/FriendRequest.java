@@ -22,6 +22,8 @@
 
 package io.bosonnetwork.photonmessaging;
 
+import org.jspecify.annotations.Nullable;
+
 import io.bosonnetwork.Id;
 
 /**
@@ -49,10 +51,28 @@ public interface FriendRequest {
 	 *
 	 * @return the greeting message, or {@code null} if none was provided.
 	 */
-	String getHello();
+	@Nullable String getHello();
+
+	/**
+	 * Checks whether this is an outgoing request, one the current user sent.
+	 * <p>
+	 * A request is outgoing when the current user is its initiator and incoming when the other user
+	 * is. Since {@link #getUserId()} is always the other user, the current user initiated the request
+	 * exactly when the initiator is not the other user.
+	 * </p>
+	 *
+	 * @return {@code true} if the current user sent the request, {@code false} if it was received.
+	 */
+	default boolean isOutgoing() {
+		return !getInitiatorId().equals(getUserId());
+	}
 
 	/**
 	 * Checks if the friend request has been accepted.
+	 * <p>
+	 * Accepted is a final state: an accepted request cannot be accepted again, and only a new
+	 * request between the same two users (or removing the record) changes it.
+	 * </p>
 	 *
 	 * @return {@code true} if the request was accepted; {@code false} otherwise.
 	 */
@@ -60,6 +80,11 @@ public interface FriendRequest {
 
 	/**
 	 * Checks if the friend request has expired.
+	 * <p>
+	 * A request that is still pending a week after it was sent expires. Both sides count the week
+	 * from the moment it was sent. Expired is a final state: an expired request can no longer be
+	 * accepted, and only a new request between the same two users (or removing the record) changes it.
+	 * </p>
 	 *
 	 * @return {@code true} if the request is expired; {@code false} otherwise.
 	 */

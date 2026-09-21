@@ -29,7 +29,9 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import io.bosonnetwork.Id;
 import io.bosonnetwork.photonmessaging.ConnectionListener;
+import io.bosonnetwork.photonmessaging.FriendRequestListener;
 
 public class PhotonMessagingListenersTests {
 	private static class RecordingConnectionListener implements ConnectionListener {
@@ -106,5 +108,115 @@ public class PhotonMessagingListenersTests {
 		listeners.onDisconnected();
 
 		assertEquals(List.of("disconnected"), good.events);
+	}
+
+	private static class RecordingFriendRequestListener implements FriendRequestListener {
+		final List<String> events = new ArrayList<>();
+
+		@Override
+		public void onFriendRequest(Id userId, String hello) {
+			events.add("request:" + userId + ":" + hello);
+		}
+
+		@Override
+		public void onFriendRequestAccepted(Id userId) {
+			events.add("accepted:" + userId);
+		}
+	}
+
+	@Test
+	void dispatchesFriendRequestEventsToEveryListener() {
+		PhotonMessagingListeners listeners = new PhotonMessagingListeners();
+		RecordingFriendRequestListener first = new RecordingFriendRequestListener();
+		RecordingFriendRequestListener second = new RecordingFriendRequestListener();
+		listeners.addFriendRequestListener(first);
+		listeners.addFriendRequestListener(second);
+
+		Id alice = Id.random();
+		Id bob = Id.random();
+		listeners.onFriendRequest(alice, "Hi, I'm Alice");
+		listeners.onFriendRequestAccepted(bob);
+
+		List<String> expected = List.of("request:" + alice + ":Hi, I'm Alice", "accepted:" + bob);
+		assertEquals(expected, first.events);
+		assertEquals(expected, second.events);
+	}
+
+	@Test
+	void friendRequestEventsWithoutListenersAreDropped() {
+		PhotonMessagingListeners listeners = new PhotonMessagingListeners();
+
+		// Nothing registered, or everything removed again: dispatch is a no-op, not an error.
+		listeners.onFriendRequest(Id.random(), "Hello");
+		listeners.onFriendRequestAccepted(Id.random());
+
+		RecordingFriendRequestListener listener = new RecordingFriendRequestListener();
+		listeners.addFriendRequestListener(listener);
+		listeners.removeFriendRequestListener(listener);
+		listeners.onFriendRequest(Id.random(), "Hello");
+		listeners.onFriendRequestAccepted(Id.random());
+
+		assertEquals(List.of(), listener.events);
+	}
+
+	@Test
+	void removedFriendRequestListenerReceivesNoFurtherEvents() {
+		PhotonMessagingListeners listeners = new PhotonMessagingListeners();
+		RecordingFriendRequestListener removed = new RecordingFriendRequestListener();
+		RecordingFriendRequestListener kept = new RecordingFriendRequestListener();
+		listeners.addFriendRequestListener(removed);
+		listeners.addFriendRequestListener(kept);
+
+		Id alice = Id.random();
+		listeners.onFriendRequest(alice, "first");
+		listeners.removeFriendRequestListener(removed);
+		listeners.onFriendRequest(alice, "second");
+		listeners.onFriendRequestAccepted(alice);
+
+		assertEquals(List.of("request:" + alice + ":first"), removed.events);
+		assertEquals(List.of("request:" + alice + ":first", "request:" + alice + ":second", "accepted:" + alice),
+				kept.events);
+
+		// Removing a listener that was never added leaves the others registered.
+		listeners.removeFriendRequestListener(new RecordingFriendRequestListener());
+		listeners.onFriendRequestAccepted(alice);
+		assertEquals(4, kept.events.size());
+	}
+
+	@Test
+	void removeAllListenersDropsFriendRequestListeners() {
+		PhotonMessagingListeners listeners = new PhotonMessagingListeners();
+		RecordingFriendRequestListener listener = new RecordingFriendRequestListener();
+		listeners.addFriendRequestListener(listener);
+
+		listeners.removeAllListeners();
+		listeners.onFriendRequest(Id.random(), "Hello");
+
+		assertEquals(List.of(), listener.events);
+	}
+
+	@Test
+	void friendRequestDispatchIsExceptionIsolated() {
+		PhotonMessagingListeners listeners = new PhotonMessagingListeners();
+		FriendRequestListener throwing = new FriendRequestListener() {
+			@Override
+			public void onFriendRequest(Id userId, String hello) {
+				throw new RuntimeException("boom");
+			}
+
+			@Override
+			public void onFriendRequestAccepted(Id userId) {
+				throw new RuntimeException("boom");
+			}
+		};
+		RecordingFriendRequestListener good = new RecordingFriendRequestListener();
+		listeners.addFriendRequestListener(throwing);
+		listeners.addFriendRequestListener(good);
+
+		Id alice = Id.random();
+		listeners.onFriendRequest(alice, "Hello");
+		listeners.onFriendRequestAccepted(alice);
+
+		assertEquals(List.of("request:" + alice + ":Hello", "accepted:" + alice), good.events);
 	}
 }

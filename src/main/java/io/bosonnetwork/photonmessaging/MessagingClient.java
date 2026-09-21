@@ -394,6 +394,10 @@ public interface MessagingClient {
 	////////////////////////////////////////////////////////////////////////////
 	/**
 	 * Sends a friend request to a specific user.
+	 * <p>
+	 * There is at most one friend request record per user: sending replaces any record already
+	 * kept for that user, whatever its direction or state, on both sides.
+	 * </p>
 	 *
 	 * @param id the identifier of the user to send the request to.
 	 * @param hello an optional greeting message.
@@ -403,9 +407,17 @@ public interface MessagingClient {
 
 	/**
 	 * Accepts an incoming friend request from a specific user.
+	 * <p>
+	 * Only an incoming request that is still pending can be accepted; the record is kept, marked
+	 * accepted, and the sender is added as a friend. Ignoring a request needs no call at all: the
+	 * record stays as it is and can be accepted later while it has not expired.
+	 * </p>
 	 *
 	 * @param id the identifier of the user who sent the request.
-	 * @return a {@link CompletableFuture} that completes when the request is accepted.
+	 * @return a {@link CompletableFuture} that completes when the request is accepted, or fails with
+	 *         {@link IllegalArgumentException} if there is no request from that user, or with
+	 *         {@link IllegalStateException} if the request is outgoing, already accepted or expired
+	 *         (the record is left unchanged).
 	 */
 	CompletableFuture<Void> acceptFriendRequest(Id id);
 
@@ -421,6 +433,10 @@ public interface MessagingClient {
 
 	/**
 	 * Retrieves all friend requests.
+	 * <p>
+	 * Every stored record is returned, incoming and outgoing, pending, accepted and expired alike;
+	 * a record only goes away when it is removed or replaced by a new request.
+	 * </p>
 	 *
 	 * @return a {@link CompletableFuture} that will be completed with the list of {@link FriendRequest}s.
 	 */

@@ -491,7 +491,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 	@Override
 	public Future<Boolean> removeFriendRequests(Collection<Id> userIds) {
 		if (userIds.isEmpty())
-			return Future.succeededFuture(true);
+			return Future.succeededFuture(false);
 
 		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id", userIds.stream().map(Id::bytesUnsafe).toList());
 		return withTransaction(c ->

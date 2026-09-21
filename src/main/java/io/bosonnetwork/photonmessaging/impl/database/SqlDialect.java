@@ -171,6 +171,7 @@ public class SqlDialect {
 				ON CONFLICT (id) DO UPDATE SET
 					initiator = EXCLUDED.initiator,
 					hello = EXCLUDED.hello,
+					created_at = EXCLUDED.created_at,
 					updated_at = EXCLUDED.updated_at,
 					accepted = EXCLUDED.accepted,
 					accepted_at = EXCLUDED.accepted_at
