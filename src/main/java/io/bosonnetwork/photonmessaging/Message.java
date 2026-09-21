@@ -225,16 +225,18 @@ public interface Message {
 		<T> T getBody();
 
 		/**
-		 * Retrieves the body of the content as a string representation.
+		 * Retrieves the body of the content as a string representation: a text body as it is, a
+		 * binary body decoded as UTF-8, and an object body rendered as JSON.
 		 *
-		 * @return the body of the content as a string, or null if the body is not present.
+		 * @return the body of the content as a string; never {@code null}
 		 */
 		String asText();
 
 		/**
-		 * Retrieves the body of the content as an array of bytes.
+		 * Retrieves the body of the content as an array of bytes: a text body encoded as UTF-8, a
+		 * binary body as a defensive copy, and an object body CBOR-encoded.
 		 *
-		 * @return a byte array representing the body of the content, or null if the body is not present.
+		 * @return a byte array representing the body of the content; never {@code null}
 		 */
 		byte[] asBinary();
 

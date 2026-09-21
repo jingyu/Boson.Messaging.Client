@@ -50,6 +50,15 @@ public final class SessionInfo {
 	@JsonInclude(JsonInclude.Include.NON_EMPTY)
 	private final String lastAddress;
 
+	/**
+	 * Deserializes a session info from its wire representation.
+	 *
+	 * @param deviceId    the id of the device the session belongs to
+	 * @param online      whether the device is currently online
+	 * @param lastActive  the timestamp of the device's last activity, in milliseconds since epoch
+	 * @param lastAddress the last known address of the device, or {@code null} if the service
+	 *                    reported none
+	 */
 	@JsonCreator
 	public SessionInfo(@JsonProperty(value = "id", required = true) Id deviceId,
 			@JsonProperty("o") boolean online,
@@ -61,18 +70,38 @@ public final class SessionInfo {
 		this.lastAddress = lastAddress;
 	}
 
+	/**
+	 * Returns the id of the device this session belongs to.
+	 *
+	 * @return the device id
+	 */
 	public Id deviceId() {
 		return deviceId;
 	}
 
+	/**
+	 * Returns whether the device is currently online.
+	 *
+	 * @return {@code true} if the device holds a live session
+	 */
 	public boolean online() {
 		return online;
 	}
 
+	/**
+	 * Returns the timestamp of the device's last activity.
+	 *
+	 * @return the last activity time, in milliseconds since epoch
+	 */
 	public long lastActive() {
 		return lastActive;
 	}
 
+	/**
+	 * Returns the last known address of the device, as reported by the service.
+	 *
+	 * @return the device's last known address, or {@code null} if none was reported
+	 */
 	public String lastAddress() {
 		return lastAddress;
 	}

@@ -51,6 +51,10 @@ public class ConnectionException extends MessagingException {
 		UNKNOWN,
 	}
 
+	/**
+	 * The classified reason the server refused the connection, or {@link Reason#UNKNOWN} for an
+	 * unclassified failure.
+	 */
 	private final Reason reason;
 
 	/**
