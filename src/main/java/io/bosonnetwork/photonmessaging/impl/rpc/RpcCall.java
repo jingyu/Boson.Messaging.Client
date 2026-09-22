@@ -40,6 +40,7 @@ import io.bosonnetwork.photonmessaging.InviteTicket;
 import io.bosonnetwork.photonmessaging.SessionInfo;
 import io.bosonnetwork.photonmessaging.exceptions.rpc.*;
 import io.bosonnetwork.photonmessaging.impl.ContactMutation;
+import io.bosonnetwork.photonmessaging.impl.ContactSync;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelInfo;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelMembersRole;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelSessionKeyRotation;
@@ -166,6 +167,10 @@ public class RpcCall<R> {
 
 	public static RpcCall<Integer> contactMutate(ContactMutation mutation) {
 		return new RpcCall<>(RpcRequest.contactMutate(nextId(), mutation));
+	}
+
+	public static RpcCall<ContactSync> contactSync(int revision) {
+		return new RpcCall<>(RpcRequest.contactSync(nextId(), revision));
 	}
 
 	public static RpcCall<ChannelInfo> createChannel(NewChannelInfo params) {

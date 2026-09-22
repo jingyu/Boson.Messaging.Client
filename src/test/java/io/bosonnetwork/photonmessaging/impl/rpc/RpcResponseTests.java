@@ -16,6 +16,8 @@ import io.bosonnetwork.crypto.Random;
 import io.bosonnetwork.json.Json;
 import io.bosonnetwork.photonmessaging.Channel;
 import io.bosonnetwork.photonmessaging.SessionInfo;
+import io.bosonnetwork.photonmessaging.impl.ContactMutation;
+import io.bosonnetwork.photonmessaging.impl.ContactSync;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelInfo;
 
 public class RpcResponseTests {
@@ -36,6 +38,10 @@ public class RpcResponseTests {
 				RpcResponse.revokeSession(nextId())));
 		responses.add(Arguments.of(RpcMethod.CONTACT_MUTATE,
 				RpcResponse.contactMutate(nextId(), 67)));
+		responses.add(Arguments.of(RpcMethod.CONTACT_SYNC,
+				RpcResponse.contactSync(nextId(), ContactSync.upToDate(42))));
+		responses.add(Arguments.of(RpcMethod.CONTACT_SYNC,
+				RpcResponse.contactSync(nextId(), ContactSync.delta(11, List.of(ContactMutation.clear(10))))));
 		responses.add(Arguments.of(RpcMethod.CHANNEL_CREATE,
 				RpcResponse.createChannel(nextId(), channelInfo)));
 		responses.add(Arguments.of(RpcMethod.CHANNEL_DELETE,

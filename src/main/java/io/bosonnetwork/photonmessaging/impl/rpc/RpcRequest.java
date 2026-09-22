@@ -69,6 +69,7 @@ public class RpcRequest {
 			@JsonSubTypes.Type(value = Void.class, name = "sl"),
 			@JsonSubTypes.Type(value = Id.class, name = "sr"),
 			@JsonSubTypes.Type(value = ContactMutation.class, name = "cm"),
+			@JsonSubTypes.Type(value = Integer.class, name = "cs"),
 			@JsonSubTypes.Type(value = NewChannelInfo.class, name = "cc"),
 			@JsonSubTypes.Type(value = Void.class, name = "cd"),
 			@JsonSubTypes.Type(value = Id.class, name = "cot"),
@@ -170,6 +171,10 @@ public class RpcRequest {
 
 	public static RpcRequest contactMutate(long id, ContactMutation mutation) {
 		return new RpcRequest(id, RpcMethod.CONTACT_MUTATE, mutation);
+	}
+
+	public static RpcRequest contactSync(long id, int revision) {
+		return new RpcRequest(id, RpcMethod.CONTACT_SYNC, revision);
 	}
 
 	public static RpcRequest createChannel(long id, NewChannelInfo params) {

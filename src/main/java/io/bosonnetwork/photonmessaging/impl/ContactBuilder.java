@@ -149,7 +149,7 @@ public class ContactBuilder {
 	@JsonProperty("nt")
 	public ContactBuilder withNotice(String notice) {
 		this.notice = notice == null || notice.isEmpty() ? null : notice;
-		return null;
+		return this;
 	}
 
 	@JsonProperty("a")

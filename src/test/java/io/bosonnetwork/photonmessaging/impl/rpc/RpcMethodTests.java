@@ -26,7 +26,7 @@ public class RpcMethodTests {
 
 		for (RpcMethod method : methods) {
 			switch (method) {
-				case SESSION_LIST, SESSION_REVOKE, CONTACT_MUTATE, CHANNEL_CREATE -> {
+				case SESSION_LIST, SESSION_REVOKE, CONTACT_MUTATE, CONTACT_SYNC, CHANNEL_CREATE -> {
 					assertTrue(method.isServiceRpc());
 					assertFalse(method.isChannelRpc());
 					assertFalse(method.isOwnerPrivilegedChannelRpc());

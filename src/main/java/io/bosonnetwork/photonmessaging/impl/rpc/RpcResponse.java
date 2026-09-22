@@ -38,6 +38,7 @@ import org.jspecify.annotations.Nullable;
 import io.bosonnetwork.Id;
 import io.bosonnetwork.json.Json;
 import io.bosonnetwork.photonmessaging.SessionInfo;
+import io.bosonnetwork.photonmessaging.impl.ContactSync;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelInfo;
 import io.bosonnetwork.photonmessaging.impl.dto.IdList;
 import io.bosonnetwork.photonmessaging.impl.dto.SessionInfoList;
@@ -75,6 +76,7 @@ public class RpcResponse {
 			@JsonSubTypes.Type(value = SessionInfoList.class, name = "sl"),
 			@JsonSubTypes.Type(value = Void.class, name = "sr"),
 			@JsonSubTypes.Type(value = Integer.class, name = "cm"),
+			@JsonSubTypes.Type(value = ContactSync.class, name = "cs"),
 			@JsonSubTypes.Type(value = ChannelInfo.class, name = "cc"),
 			@JsonSubTypes.Type(value = Void.class, name = "cd"),
 			@JsonSubTypes.Type(value = Void.class, name = "cot"),
@@ -188,6 +190,10 @@ public class RpcResponse {
 
 	public static RpcResponse contactMutate(long id, int revision) {
 		return new RpcResponse(id, RpcMethod.CONTACT_MUTATE, revision, null);
+	}
+
+	public static RpcResponse contactSync(long id, ContactSync contactSync) {
+		return new RpcResponse(id, RpcMethod.CONTACT_SYNC, contactSync, null);
 	}
 
 	public static RpcResponse createChannel(long id, ChannelInfo channelInfo) {

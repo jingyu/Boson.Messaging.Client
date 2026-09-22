@@ -122,7 +122,7 @@ public class MessageBuilder implements Message.Builder {
 		if (recipient == null)
 			throw new IllegalStateException("Recipient not set");
 
-		long now = System.currentTimeMillis();
+		long now = client.originTimestamp();
 		Id messageId = DeviceOriginated.generateId(client.getDeviceId(), now);
 
 		if (content == null || format == null)

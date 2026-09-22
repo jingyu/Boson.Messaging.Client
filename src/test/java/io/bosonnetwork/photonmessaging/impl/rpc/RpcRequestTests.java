@@ -36,6 +36,8 @@ public class RpcRequestTests {
 				RpcRequest.revokeSession(nextId(), Id.random())));
 		requests.add(Arguments.of(RpcMethod.CONTACT_MUTATE,
 				RpcRequest.contactMutate(nextId(), ContactMutation.clear(10))));
+		requests.add(Arguments.of(RpcMethod.CONTACT_SYNC,
+				RpcRequest.contactSync(nextId(), 42)));
 		requests.add(Arguments.of(RpcMethod.CHANNEL_CREATE,
 				RpcRequest.createChannel(nextId(), new NewChannelInfo(Id.random(), Random.randomBytes(64),
 						Channel.Permission.MEMBER_INVITE, "Test Channel", null, false))));

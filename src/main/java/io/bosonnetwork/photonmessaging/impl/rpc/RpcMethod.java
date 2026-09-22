@@ -48,6 +48,13 @@ public enum RpcMethod {
 	CONTACT_MUTATE,
 
 	/**
+	 * Fetches the contact changes since a revision (a delta or a snapshot), for a device that
+	 * missed a contact sync notification.
+	 */
+	@JsonProperty("cs")
+	CONTACT_SYNC,
+
+	/**
 	 * Creates a channel.
 	 */
 	@JsonProperty("cc")
@@ -103,7 +110,7 @@ public enum RpcMethod {
 	@JsonProperty("cmr")
 	CHANNEL_MEMBERS_REMOVE,
 
-	// Unprivileged channel RPC methods, range 0x60 - 0x6F
+	// Unprivileged channel RPC methods
 	/**
 	 * Joins the channel.
 	 */
@@ -151,7 +158,7 @@ public enum RpcMethod {
 	 * @return {@code true} if this method is in the service RPC range; {@code false} otherwise
 	 */
 	public boolean isServiceRpc() {
-		return ordinal() < 4;
+		return compareTo(CHANNEL_CREATE) <= 0;
 	}
 
 	/**
@@ -160,7 +167,7 @@ public enum RpcMethod {
 	 * @return {@code true} if this method is in the channel RPC range; {@code false} otherwise
 	 */
 	public boolean isChannelRpc() {
-		return ordinal() >=4 && ordinal() < 15;
+		return compareTo(CHANNEL_DELETE) >= 0 && compareTo(CHANNEL_INFO) <= 0;
 	}
 
 	/**
@@ -170,7 +177,7 @@ public enum RpcMethod {
 	 *         {@code false} otherwise
 	 */
 	public boolean isOwnerPrivilegedChannelRpc() {
-		return ordinal() >= 4 && ordinal() < 8;
+		return compareTo(CHANNEL_DELETE) >= 0 && compareTo(CHANNEL_INFO_UPDATE) <= 0;
 	}
 
 	/**
@@ -180,7 +187,7 @@ public enum RpcMethod {
 	 *         {@code false} otherwise
 	 */
 	public boolean isModeratorPrivilegedChannelRpc() {
-		return ordinal() >= 8 && ordinal() < 12;
+		return compareTo(CHANNEL_MEMBERS_ROLE_UPDATE) >= 0 && compareTo(CHANNEL_MEMBERS_REMOVE) <= 0;
 	}
 
 	/**
@@ -189,6 +196,6 @@ public enum RpcMethod {
 	 * @return {@code true} if this method is in the unprivileged channel RPC range; {@code false} otherwise
 	 */
 	public boolean isUnprivilegedChannelRpc() {
-		return ordinal() >= 12 && ordinal() < 15;
+		return compareTo(CHANNEL_JOIN) >= 0 && compareTo(CHANNEL_INFO) <= 0;
 	}
 }

@@ -40,6 +40,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.netty.handler.codec.mqtt.MqttConnectReturnCode;
@@ -125,6 +126,11 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 	private final MessagingRepository repository;
 
 	private volatile int contactsRevision;
+	private final AtomicLong lastOriginTimestamp = new AtomicLong();
+	// Contact syncs are applied one at a time, in arrival order (see enqueueContactSync).
+	// Confined to the event-loop context, like the in-flight collections below.
+	private Future<Void> contactSyncChain = Future.succeededFuture();
+	private int contactSyncGeneration;
 	private final AsyncCache<Id, PhotonContact> contactCache;
 	private final AsyncCache<Id, PhotonConversation> conversationCache;
 	// Thread-confinement invariant: these collections are accessed ONLY on this verticle's
@@ -253,6 +259,17 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		this.listeners = new PhotonMessagingListeners();
 		this.connected = false;
 		this.ready = false;
+	}
+
+	/**
+	 * The send time of a message from this device, never the same twice: a message id is derived
+	 * from the device id and the send time (see {@link DeviceOriginated}), so two messages sent within
+	 * the same millisecond - a burst of messages, or a handshake followed by its contact RPC - would
+	 * otherwise share an id.
+	 */
+	long originTimestamp() {
+		long now = System.currentTimeMillis();
+		return lastOriginTimestamp.updateAndGet(last -> Math.max(now, last + 1));
 	}
 
 	@Override
@@ -500,7 +517,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		runningCheck();
 
 		// friend request is a notification message to the target user
-		long now = System.currentTimeMillis();
+		long now = originTimestamp();
 		Handshake hs = Handshake.friendRequest(hello, now);
 		PhotonFriendRequest request = new PhotonFriendRequest(userId, userIdentity.getId(), hello, now, now);
 
@@ -549,7 +566,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			PhotonFriendRequest request = (PhotonFriendRequest) fr;
 			Signature.KeyPair sessionKeypair = Signature.KeyPair.random();
 			byte[] sessionKey = sessionKeypair.privateKey().bytes();
-			long now = System.currentTimeMillis();
+			long now = originTimestamp();
 			Handshake hs = Handshake.friendRequestAccept(sessionKey, now);
 
 			Promise<Void> promise = Promise.promise();
@@ -634,7 +651,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		return sendRpcCall(homePeerId, call).compose(revision -> {
 			Contact contact = friend.edit().setRevision(revision).build();
 			return repository.putContact(revision, contact).map(vv -> {
-				contactsRevision = revision;
+				advanceContactsRevision(revision);
 				// A locally triggered add deliberately does NOT fire onContactAdded: that callback is
 				// reserved for cross-device sync mutations, which raise it on the user's OTHER devices
 				// (see applyContactMutation). The initiating device already has the contact - it is the
@@ -688,7 +705,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				return sendRpcCall(homePeerId, RpcCall.contactMutate(mutation)).compose(revision -> {
 					Contact updated = ((ContactEditor) blocked.edit()).setRevision(revision).build();
 					return repository.putContacts(revision, List.of(updated)).map(vv -> {
-						contactsRevision = revision;
+						advanceContactsRevision(revision);
 						contactCache.synchronous().invalidate(id);
 						return updated;
 					});
@@ -702,7 +719,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			ContactMutation mutation = ContactMutation.add(contactsRevision, blocked.toOpaque(selfContext));
 			return sendRpcCall(homePeerId, RpcCall.contactMutate(mutation)).compose(revision ->
 					repository.putContact(revision, blocked).map(vv -> {
-						contactsRevision = revision;
+						advanceContactsRevision(revision);
 						contactCache.synchronous().invalidate(id);
 						return (Contact) blocked;
 					}));
@@ -742,7 +759,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				return sendRpcCall(homePeerId, addContactCall).compose(revision -> {
 					PhotonChannel channel = (PhotonChannel) ch.edit().setRevision(revision).build();
 					return repository.putContacts(revision, List.of(channel)).map(vv -> {
-						contactsRevision = revision;
+						advanceContactsRevision(revision);
 						return channel;
 					});
 				});
@@ -773,7 +790,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 					RpcCall<Integer> removeContactCall = RpcCall.contactMutate(mutation);
 					return sendRpcCall(homePeerId, removeContactCall).compose(revision ->
 							repository.removeContacts(revision, List.of(channelId)).map(ignored -> {
-								contactsRevision = revision;
+								advanceContactsRevision(revision);
 								contactCache.synchronous().invalidate(channelId);
 								return true;
 							})
@@ -847,7 +864,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 					return sendRpcCall(homePeerId, addContactCall).compose(revision -> {
 						PhotonChannel channel = (PhotonChannel) ch.edit().setRevision(revision).build();
 						return repository.putContacts(revision, List.of(channel)).map(vv -> {
-							contactsRevision = revision;
+							advanceContactsRevision(revision);
 							contactCache.synchronous().invalidate(channel.getId());
 							return channel;
 						});
@@ -878,7 +895,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 					RpcCall<Integer> removeContactCall = RpcCall.contactMutate(mutation);
 					return sendRpcCall(homePeerId, removeContactCall).compose(revision ->
 							repository.removeContacts(revision, List.of(channelId)).map(ignored -> {
-								contactsRevision = revision;
+								advanceContactsRevision(revision);
 								contactCache.synchronous().invalidate(channelId);
 								return true;
 							})
@@ -1273,7 +1290,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				return sendRpcCall(homePeerId, call).compose(revision -> {
 					Contact updatedContact = ((ContactEditor) updated.edit()).setRevision(revision).build();
 					return repository.putContacts(revision, List.of(updatedContact)).map(vv -> {
-						contactsRevision = revision;
+						advanceContactsRevision(revision);
 						contactCache.synchronous().invalidate(updated.getId());
 						return updatedContact;
 					});
@@ -1303,7 +1320,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		RpcCall<Integer> call = RpcCall.contactMutate(mutation);
 		return (Future<Void>) sendRpcCall(homePeerId, call).compose(revision ->
 				repository.removeContacts(revision, contactIds).<@Nullable Void>map(ignored -> {
-					contactsRevision = revision;
+					advanceContactsRevision(revision);
 					return null;
 				}));
 	}
@@ -1318,7 +1335,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			RpcCall<Integer> call = RpcCall.contactMutate(mutation);
 			sendRpcCall(homePeerId, call).compose(revision ->
 					repository.clearContacts(revision).<@Nullable Void>map(vv -> {
-						contactsRevision = revision;
+						advanceContactsRevision(revision);
 						return null;
 					})
 			).onComplete((Promise<@Nullable Void>) promise);
@@ -1423,7 +1440,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 
 	private <R> Future<R> sendRpcCall(Id recipient, RpcCall<R> call) {
 		inflightRpcCalls.put(call.getId(), call);
-		long now = System.currentTimeMillis();
+		long now = originTimestamp();
 		Id messageId = DeviceOriginated.generateId(getDeviceId(), now);
 		PhotonMessage<RpcRequest> message = new PhotonMessage<>(messageId, recipient, Message.Type.CONTROL_MESSAGE, now, call.getRequest());
 		log.debug("Sending RPC call {}:{} to {} ...", call.getId(), call.getMethod(), recipient);
@@ -1729,6 +1746,8 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			log.info("Current client contacts revision: {}", revision);
 
 			contactsRevision = revision;
+			contactSyncGeneration++;
+			contactSyncChain = Future.succeededFuture();
 
 			MqttClientOptions options = new MqttClientOptions()
 					.setAutoGeneratedClientId(false)
@@ -2377,7 +2396,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 
 			case CONTACT_SYNC -> {
 				ContactSync contactSync = notif.getBody();
-				yield applyContactSync(contactSync).andThen(ar -> {
+				yield enqueueContactSync(contactSync).andThen(ar -> {
 					if (ar.succeeded()) {
 						if (!ready) {
 							log.info("Contact synchronization completed on startup, revision {}, client is ready", contactsRevision);
@@ -2658,7 +2677,61 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		return members;
 	}
 
-	private Future<Void> applyContactSync(ContactSync contactSync) {
+	enum MutationOrder {
+		/** Made against the local revision: the next change to apply. */
+		APPLY,
+		/** Made against an older revision: already applied, a redelivery or a replay. */
+		ALREADY_APPLIED,
+		/** Made against a newer revision: the changes in between were missed. */
+		GAP
+	}
+
+	static MutationOrder mutationOrder(int baseRevision, int localRevision) {
+		if (baseRevision == localRevision)
+			return MutationOrder.APPLY;
+
+		return baseRevision < localRevision ? MutationOrder.ALREADY_APPLIED : MutationOrder.GAP;
+	}
+
+	// The revision only moves forward: the response to a local mutation can be handled after a
+	// contact sync that already applied a later change.
+	private void advanceContactsRevision(int revision) {
+		if (revision > contactsRevision)
+			contactsRevision = revision;
+	}
+
+	/**
+	 * Applies a contact sync after every contact sync queued before it. The deltas are checked against
+	 * the local revision, which only holds while they are applied one at a time. A reconnect starts a
+	 * new queue: syncs still queued from the previous connection are dropped, the new connection's
+	 * startup sync covers them.
+	 */
+	private Future<Void> enqueueContactSync(ContactSync contactSync) {
+		final int generation = contactSyncGeneration;
+		Future<Void> applied = contactSyncChain.transform(ar -> {
+			if (generation != contactSyncGeneration)
+				return Future.failedFuture(new IllegalStateException("Contact sync superseded by a reconnect"));
+
+			return applyContactSync(contactSync, true);
+		});
+		contactSyncChain = applied.otherwiseEmpty();
+		return applied;
+	}
+
+	/**
+	 * Applies a contact sync from the service.
+	 * <p>
+	 * Each delta mutation is based on the revision it was made against: one based on the local
+	 * revision is applied, one based on an older revision was already applied (a redelivery, or a
+	 * change stored for this device while the connect-time sync already included it) and is skipped,
+	 * and one based on a newer revision means changes were missed, so the missing changes are fetched
+	 * from the service instead of applying this one over the gap.
+	 *
+	 * @param contactSync the contact sync to apply
+	 * @param resyncOnGap whether a gap is repaired by fetching the missing changes; false for the
+	 *                    service's answer to that fetch, which must not have a gap itself
+	 */
+	private Future<Void> applyContactSync(ContactSync contactSync, boolean resyncOnGap) {
 		log.info("Applying contact sync: local revision {}, remote revision {} ...",
 				contactsRevision, contactSync.getRevision());
 
@@ -2669,15 +2742,35 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			}
 
 			case DELTA -> {
-				log.debug("Applying contact updates with delta");
 				List<ContactMutation> mutations = contactSync.getMutations();
+				int base = mutations.isEmpty() ? contactSync.getRevision() : mutations.get(0).getRevision();
+				if (mutationOrder(base, contactsRevision) == MutationOrder.GAP) {
+					if (!resyncOnGap) {
+						log.error("Contact sync from revision {} does not continue the local revision {}",
+								base, contactsRevision);
+						yield Future.failedFuture(new IllegalStateException("Contact sync does not continue the local revision"));
+					}
+
+					log.warn("Missed contact changes between revision {} and {}, fetching them", contactsRevision, base);
+					yield resyncContacts();
+				}
+
+				log.debug("Applying contact updates with delta");
 				Future<Void> applyChain = Future.succeededFuture();
 				for (ContactMutation mutation : mutations) {
-					applyChain = applyChain.compose(v -> applyContactMutation(mutation));
+					applyChain = applyChain.compose(v -> switch (mutationOrder(mutation.getRevision(), contactsRevision)) {
+						case APPLY -> applyContactMutation(mutation);
+						case ALREADY_APPLIED -> {
+							log.debug("Contact mutation(base rev {}) already applied, local revision {}, skipped",
+									mutation.getRevision(), contactsRevision);
+							yield Future.succeededFuture();
+						}
+						case GAP -> Future.failedFuture(new IllegalStateException("Contact mutation based on revision " +
+								mutation.getRevision() + " does not continue the local revision " + contactsRevision));
+					});
 				}
 				yield applyChain.compose(v -> {
-					// contactsRevision = contactSync.getRevision();
-					if (contactsRevision != contactSync.getRevision()) {
+					if (contactsRevision < contactSync.getRevision()) {
 						log.error("the revision not up-to-data after applied the mutations, expected: {}, actual: {}",
 								contactSync.getRevision(), contactsRevision);
 						return Future.failedFuture(new IllegalStateException("the revision not up-to-data after applied the mutations"));
@@ -2707,6 +2800,11 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		};
 	}
 
+	private Future<Void> resyncContacts() {
+		return sendRpcCall(homePeerId, RpcCall.contactSync(contactsRevision))
+				.compose(contactSync -> applyContactSync(contactSync, false));
+	}
+
 	private Future<Void> applyContactMutation(ContactMutation mutation) {
 		final int revision = mutation.getRevision() + 1;
 		return switch (mutation.getOp()) {
@@ -2721,7 +2819,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 
 				log.trace("Applying contact mutation(base rev {}): add {}", mutation.getRevision(), contact.getId());
 				yield repository.putContacts(revision, List.of(contact)).onSuccess(v -> {
-					contactsRevision = revision;
+					advanceContactsRevision(revision);
 					contactCache.synchronous().invalidate(contact.getId());
 					if (contact instanceof PhotonChannel ch)
 						refreshChannel(ch).andThen(v2 -> listeners.onContactAdded(contact));
@@ -2741,7 +2839,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 
 				log.trace("Applying contact mutation(base rev {}): update {}", mutation.getRevision(), contact.getId());
 				yield repository.putContacts(revision, List.of(contact)).onSuccess(v -> {
-					contactsRevision = revision;
+					advanceContactsRevision(revision);
 					contactCache.synchronous().invalidate(contact.getId());
 					listeners.onContactsUpdated(List.of(contact));
 				});
@@ -2751,7 +2849,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				List<Id> contactIds = Objects.requireNonNull(mutation.getData());
 				log.trace("Applying contact mutation(base rev {}): remove {}", mutation.getRevision(), contactIds);
 				yield (Future<Void>) repository.removeContacts(revision, contactIds).<@Nullable Void>map(removed -> {
-					contactsRevision = revision;
+					advanceContactsRevision(revision);
 					contactCache.synchronous().invalidateAll(contactIds);
 					if (removed)
 						listeners.onContactsRemoved(contactIds);
@@ -2761,7 +2859,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 
 			case CLEAR -> repository.clearContacts(revision).onSuccess(v -> {
 				log.trace("Applying contact mutation(base rev {}): clear", mutation.getRevision());
-				contactsRevision = revision;
+				advanceContactsRevision(revision);
 				contactCache.synchronous().invalidateAll();
 				listeners.onContactsCleared();
 			});
