@@ -51,6 +51,10 @@ public class ContactSyncTests {
 						auto.toOpaque(ctx)))
 		));
 
+		// An empty SNAPSHOT: the service has none of the user's contacts
+		syncs.add(Arguments.of(ContactSync.Type.SNAPSHOT,
+				new ContactSync(0, ContactSync.Type.SNAPSHOT, null, List.of())));
+
 		return syncs.stream();
 	}
 

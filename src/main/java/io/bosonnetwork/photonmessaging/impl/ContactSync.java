@@ -92,8 +92,7 @@ public class ContactSync {
 		if (type == Type.DELTA && (mutations == null || mutations.isEmpty()))
 			throw new IllegalArgumentException("Delta sync requires mutations");
 
-		if (type == Type.SNAPSHOT && (contacts == null || contacts.isEmpty()))
-			throw new IllegalArgumentException("Snapshot sync requires contacts");
+		// A snapshot may be empty: the service has none of the user's contacts.
 
 		this.type = type;
 		this.revision = revision;

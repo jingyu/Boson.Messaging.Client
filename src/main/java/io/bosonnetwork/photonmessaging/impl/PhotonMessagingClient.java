@@ -95,11 +95,14 @@ import io.bosonnetwork.photonmessaging.exceptions.MessageTimeoutException;
 import io.bosonnetwork.photonmessaging.exceptions.NotChannelMemberException;
 import io.bosonnetwork.photonmessaging.exceptions.NotConnectedException;
 import io.bosonnetwork.photonmessaging.exceptions.RevisionNotMonotonicException;
+import io.bosonnetwork.photonmessaging.exceptions.rpc.ContactAlreadyExistsException;
+import io.bosonnetwork.photonmessaging.exceptions.rpc.RevisionOutdateException;
 import io.bosonnetwork.photonmessaging.impl.database.SqliteDatabase;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelInfo;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelMembersRole;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelSessionKeyRotation;
 import io.bosonnetwork.photonmessaging.impl.dto.NewChannelInfo;
+import io.bosonnetwork.photonmessaging.impl.dto.OpaqueContact;
 import io.bosonnetwork.photonmessaging.impl.rpc.RpcCall;
 import io.bosonnetwork.photonmessaging.impl.rpc.RpcRequest;
 import io.bosonnetwork.photonmessaging.impl.rpc.RpcResponse;
@@ -2781,24 +2784,218 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			}
 
 			case SNAPSHOT -> {
-				log.debug("Applying contact updates with snapshot");
 				int revision = contactSync.getRevision();
 				List<Contact> contacts;
 				try {
-					contacts = contactSync.getContacts().stream()
-							.map(opaque -> (Contact) PhotonContact.fromOpaque(opaque, selfContext))
-							.toList();
+					contacts = snapshotContacts(contactSync);
 				} catch (IllegalArgumentException e) {
 					// PhotonContact.fromOpaque will throw exception
 					log.error("Failed to parse opaque contact from snapshot", e);
 					yield Future.failedFuture(e);
 				}
-				yield repository.putContacts(revision, contacts).onSuccess(v -> {
-					contactsRevision = revision;
-				});
+
+				// The service answers UP_TO_DATE when the revisions are equal, so a snapshot is either
+				// ahead of this device or behind it.
+				if (revision > contactsRevision) {
+					log.debug("Applying contact updates with snapshot");
+					yield applySnapshot(revision, contacts);
+				}
+
+				log.warn("The service is behind this device (local revision {}, service revision {}), reconciling contacts",
+						contactsRevision, revision);
+				yield reconcileContacts(revision, contacts, RECONCILE_ATTEMPTS);
 			}
 		};
 	}
+
+	private List<Contact> snapshotContacts(ContactSync contactSync) {
+		return contactSync.getContacts().stream()
+				.map(opaque -> (Contact) PhotonContact.fromOpaque(opaque, selfContext))
+				.toList();
+	}
+
+	/**
+	 * Applies a snapshot from a service that is ahead of this device: the snapshot is the whole truth,
+	 * so the local contacts it does not have are removed. They are removed at the OLD revision and the
+	 * snapshot is stored after: if storing it fails, the stored revision is still the old one and the
+	 * next sync sends the snapshot again.
+	 */
+	private Future<Void> applySnapshot(int revision, List<Contact> snapshot) {
+		final int localRevision = contactsRevision;
+		return repository.getAllContacts().compose(device -> {
+			SnapshotChanges changes = snapshotChanges(device, snapshot);
+			Future<?> removal = changes.removed().isEmpty() ? Future.succeededFuture() :
+					repository.removeContacts(localRevision, changes.removed());
+
+			return removal.compose(v -> repository.putContacts(revision, snapshot)).onSuccess(v -> {
+				contactsRevision = revision;
+				contactCache.synchronous().invalidateAll();
+
+				if (!changes.removed().isEmpty())
+					listeners.onContactsRemoved(changes.removed());
+				notifyContactsAdded(changes.added());
+				if (!changes.updated().isEmpty())
+					listeners.onContactsUpdated(changes.updated());
+			});
+		});
+	}
+
+	/**
+	 * Reconciles this device with a service that is behind it: the service lost contact state this
+	 * device has (its database was restored or reset, or the user moved to it). Nothing is removed:
+	 * this device cannot tell "removed on the service" from "lost by the service", and it owns its
+	 * data. Per contact, the copy with the later update wins; the ones this device wins are uploaded.
+	 * <p>
+	 * The stored revision is written only when every upload is done: until then it stays at this
+	 * device's old, higher revision, so a reconcile cut short by a disconnect finds the device still
+	 * ahead at the next connect, and finishes then.
+	 */
+	private Future<Void> reconcileContacts(int revision, List<Contact> snapshot, int attempts) {
+		// An upload in flight at a disconnect can still complete after the reconnect (its response is
+		// kept for this device), and must not carry on beside the new connection's reconcile.
+		final int generation = contactSyncGeneration;
+		return repository.getAllContacts().compose(device -> {
+			Reconciliation plan = reconciliation(device, snapshot);
+			log.info("Reconciling contacts: {} from the service, {} to add to it, {} to update on it",
+					plan.fromService().size(), plan.uploadAdds().size(), plan.uploadUpdates().size());
+
+			Future<Void> stored = Future.succeededFuture();
+			for (Contact contact : plan.fromService())
+				stored = stored.compose(v -> repository.putContactLocally(contact));
+
+			return stored.compose(v -> {
+				// Mutations must be based on the service's revision from here on.
+				contactsRevision = revision;
+				contactCache.synchronous().invalidateAll();
+				notifyContactsAdded(plan.added());
+				if (!plan.updated().isEmpty())
+					listeners.onContactsUpdated(plan.updated());
+
+				Future<Void> uploads = Future.succeededFuture();
+				for (Contact contact : plan.uploadAdds())
+					uploads = uploads.compose(vv -> uploadContact((PhotonContact) contact, true, generation));
+				for (Contact contact : plan.uploadUpdates())
+					uploads = uploads.compose(vv -> uploadContact((PhotonContact) contact, false, generation));
+
+				return uploads;
+			}).compose(v -> repository.putContacts(contactsRevision, List.of()));
+		}).recover(e -> {
+			// Another device of the user changed the contacts meanwhile - most likely it is
+			// reconciling too. Start over from a fresh snapshot, which has its uploads.
+			if (attempts > 1 && generation == contactSyncGeneration &&
+					(e instanceof RevisionOutdateException || e instanceof ContactAlreadyExistsException)) {
+				log.info("Contacts changed on the service during the reconcile, starting over: {}", e.getMessage());
+				return sendRpcCall(homePeerId, RpcCall.contactSync(SNAPSHOT_REQUEST_REVISION)).compose(sync -> {
+					if (sync.getType() != ContactSync.Type.SNAPSHOT)
+						return Future.failedFuture(new IllegalStateException("Expected a contact snapshot, got " + sync.getType()));
+
+					return reconcileContacts(sync.getRevision(), snapshotContacts(sync), attempts - 1);
+				});
+			}
+
+			if (generation != contactSyncGeneration)
+				log.debug("Contact reconcile from a previous connection ended: {}", e.getMessage());
+			else if (e instanceof NotConnectedException)
+				// The stored revision is still ahead of the service: the next connect finishes it.
+				log.warn("Contact reconcile cut short by a disconnect, it resumes at the next connect");
+			else
+				log.error("Failed to reconcile contacts with the service", e);
+			return Future.failedFuture(e);
+		});
+	}
+
+	private Future<Void> uploadContact(PhotonContact contact, boolean add, int generation) {
+		if (generation != contactSyncGeneration)
+			return Future.failedFuture(new IllegalStateException("Contact reconcile superseded by a reconnect"));
+
+		OpaqueContact opaque = contact.toOpaque(selfContext);
+		ContactMutation mutation = add ? ContactMutation.add(contactsRevision, opaque) :
+				ContactMutation.update(contactsRevision, opaque);
+		return sendRpcCall(homePeerId, RpcCall.contactMutate(mutation)).compose(revision -> {
+			contactsRevision = revision;
+			// The contact only: the stored revision is written when the whole reconcile is done.
+			return repository.putContactLocally(contact.edit().setRevision(revision).build());
+		});
+	}
+
+	private void notifyContactsAdded(List<Contact> added) {
+		for (Contact contact : added) {
+			if (contact instanceof PhotonChannel ch)
+				refreshChannel(ch).andThen(v -> listeners.onContactAdded(contact));
+			else
+				listeners.onContactAdded(contact);
+		}
+	}
+
+	record SnapshotChanges(List<Id> removed, List<Contact> added, List<Contact> updated) {}
+
+	/**
+	 * What a snapshot from a service ahead of this device changes: the device's contacts it does not
+	 * have are removed, and its contacts are added or, when they differ, updated.
+	 */
+	static SnapshotChanges snapshotChanges(Collection<Contact> device, Collection<Contact> snapshot) {
+		Map<Id, Contact> onDevice = new HashMap<>();
+		for (Contact contact : device)
+			onDevice.put(contact.getId(), contact);
+
+		List<Contact> added = new ArrayList<>();
+		List<Contact> updated = new ArrayList<>();
+		for (Contact contact : snapshot) {
+			Contact local = onDevice.remove(contact.getId());
+			if (local == null)
+				added.add(contact);
+			else if (local.getUpdatedAt() != contact.getUpdatedAt())
+				updated.add(contact);
+		}
+
+		return new SnapshotChanges(List.copyOf(onDevice.keySet()), added, updated);
+	}
+
+	/**
+	 * @param fromService   the service's copies to store on this device: the ones it lacks, and the
+	 *                      ones the service updated at least as late (a tie keeps the service's)
+	 * @param added         of those, the new ones on this device
+	 * @param updated       of those, the ones replacing an older copy on this device
+	 * @param uploadAdds    this device's contacts the service does not have
+	 * @param uploadUpdates this device's copies updated later than the service's
+	 */
+	record Reconciliation(List<Contact> fromService, List<Contact> added, List<Contact> updated,
+						  List<Contact> uploadAdds, List<Contact> uploadUpdates) {}
+
+	/**
+	 * How the contacts of a service that is behind this device merge with this device's: per contact
+	 * the copy with the later update wins, and nothing is removed.
+	 */
+	static Reconciliation reconciliation(Collection<Contact> device, Collection<Contact> snapshot) {
+		Map<Id, Contact> onDevice = new HashMap<>();
+		for (Contact contact : device)
+			onDevice.put(contact.getId(), contact);
+
+		List<Contact> fromService = new ArrayList<>();
+		List<Contact> added = new ArrayList<>();
+		List<Contact> updated = new ArrayList<>();
+		List<Contact> uploadUpdates = new ArrayList<>();
+		for (Contact contact : snapshot) {
+			Contact local = onDevice.remove(contact.getId());
+			if (local == null) {
+				fromService.add(contact);
+				added.add(contact);
+			} else if (local.getUpdatedAt() > contact.getUpdatedAt()) {
+				uploadUpdates.add(local);
+			} else {
+				fromService.add(contact);
+				if (local.getUpdatedAt() != contact.getUpdatedAt())
+					updated.add(contact);
+			}
+		}
+
+		return new Reconciliation(fromService, added, updated, List.copyOf(onDevice.values()), uploadUpdates);
+	}
+
+	// A reconcile that another device interrupts starts over, at most this many times in all.
+	private static final int RECONCILE_ATTEMPTS = 3;
+	// A revision no service reaches: asking for the changes since it always gets a snapshot.
+	private static final int SNAPSHOT_REQUEST_REVISION = Integer.MAX_VALUE;
 
 	private Future<Void> resyncContacts() {
 		return sendRpcCall(homePeerId, RpcCall.contactSync(contactsRevision))
