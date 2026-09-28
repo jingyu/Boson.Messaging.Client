@@ -66,7 +66,7 @@ Boson Messaging is a federated instant messaging system with the following prope
 |---|---|
 | Java JDK | 17 or later |
 | Apache Maven | 3.8 or later |
-| Boson Core (`boson-api`, `boson-core-dht`) | same version or compatible |
+| Boson Core (`boson-api`, `boson-dht`) | same version or compatible |
 
 ---
 
@@ -90,17 +90,48 @@ To skip tests:
 
 ## Adding as a Dependency
 
-Add the following to your Maven `pom.xml`:
+Published to Maven Central under the group id `io.bosonnetwork`. The current release is **3.1.2**
+and requires Java 17 or later.
+
+**Maven**
 
 ```xml
 <dependency>
     <groupId>io.bosonnetwork</groupId>
     <artifactId>boson-messaging-client</artifactId>
-    <version>${boson.version}</version>
+    <version>3.1.2</version>
 </dependency>
 ```
 
-The library requires a running Boson `Node` (from `boson-core-dht`) to be provided by the caller. A Vert.x instance is optional — the library creates an internal one if none is supplied.
+**Gradle (Kotlin DSL)**
+
+```kotlin
+implementation("io.bosonnetwork:boson-messaging-client:3.1.2")
+```
+
+Using more than one Boson library, import the bill of materials once and leave the versions off the
+dependencies themselves:
+
+```xml
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>io.bosonnetwork</groupId>
+            <artifactId>boson-dependencies</artifactId>
+            <version>3.1.2</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+```
+
+```kotlin
+implementation(platform("io.bosonnetwork:boson-dependencies:3.1.2"))
+implementation("io.bosonnetwork:boson-messaging-client")
+```
+
+The library requires a running Boson `Node` (from `boson-dht`) to be provided by the caller. A Vert.x instance is optional — the library creates an internal one if none is supplied.
 
 ### Native transport
 
