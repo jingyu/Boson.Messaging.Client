@@ -519,6 +519,9 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		Objects.requireNonNull(hello, "hello");
 		runningCheck();
 
+		if (userId.equals(getUserId()))
+			return ContextualFuture.failedFuture(new IllegalArgumentException("Cannot send friend request to self"));
+
 		// friend request is a notification message to the target user
 		long now = originTimestamp();
 		Handshake hs = Handshake.friendRequest(hello, now);
@@ -672,6 +675,9 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		Objects.requireNonNull(id, "id");
 		Objects.requireNonNull(sessionKey, "sessionKey");
 		runningCheck();
+
+		if (id.equals(getUserId()))
+			return ContextualFuture.failedFuture(new IllegalArgumentException("Cannot add yourself as a friend"));
 
 		byte[] sk = selfContext.encrypt(sessionKey);
 		Promise<Contact> promise = Promise.promise();
