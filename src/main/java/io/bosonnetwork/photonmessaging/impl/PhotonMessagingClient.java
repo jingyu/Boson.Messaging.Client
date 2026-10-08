@@ -41,6 +41,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.netty.handler.codec.mqtt.MqttConnectReturnCode;
@@ -2817,7 +2818,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 	private List<Contact> snapshotContacts(ContactSync contactSync) {
 		return contactSync.getContacts().stream()
 				.map(opaque -> (Contact) PhotonContact.fromOpaque(opaque, selfContext))
-				.toList();
+				.collect(Collectors.toUnmodifiableList());
 	}
 
 	/**

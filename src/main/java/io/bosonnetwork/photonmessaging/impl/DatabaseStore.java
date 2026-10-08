@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -244,13 +245,13 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 				future = Future.succeededFuture();
 			else {
 				CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id",
-						contactIds.stream().map(Id::bytesUnsafe).toList());
+						contactIds.stream().map(Id::bytesUnsafe).collect(Collectors.toUnmodifiableList()));
 				future = forUpdate(c, getDialect().deleteContacts(idsParam))
 						.execute(idsParam.getParams())
 						.map(this::hasAffectedRows)
 						.compose(removed -> {
 							CollectionParameter<byte[]> cidsParam = new CollectionParameter<>("cid",
-									contactIds.stream().map(Id::bytesUnsafe).toList());
+									contactIds.stream().map(Id::bytesUnsafe).collect(Collectors.toUnmodifiableList()));
 							return forUpdate(c, getDialect().deleteMessagesByConversations(cidsParam))
 									.execute(cidsParam.getParams())
 									.map(removed);
@@ -298,7 +299,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 			return Future.succeededFuture(List.of());
 
 		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id",
-				contactIds.stream().map(Id::bytesUnsafe).toList());
+				contactIds.stream().map(Id::bytesUnsafe).collect(Collectors.toUnmodifiableList()));
 		return withConnection(c ->
 				forQuery(c, getDialect().selectContacts(idsParam))
 						.execute(idsParam.getParams())
@@ -412,7 +413,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 			return Future.succeededFuture(true);
 
 		CollectionParameter<byte[]> cidsParam = new CollectionParameter<>("cid",
-				conversationIds.stream().map(Id::bytesUnsafe).toList());
+				conversationIds.stream().map(Id::bytesUnsafe).collect(Collectors.toUnmodifiableList()));
 
 		return withTransaction(c ->
 				forUpdate(c, getDialect().deleteMessagesByConversations(cidsParam))
@@ -493,7 +494,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 		if (userIds.isEmpty())
 			return Future.succeededFuture(false);
 
-		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id", userIds.stream().map(Id::bytesUnsafe).toList());
+		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id", userIds.stream().map(Id::bytesUnsafe).collect(Collectors.toUnmodifiableList()));
 		return withTransaction(c ->
 				forUpdate(c, getDialect().deleteFriendRequests(idsParam))
 						.execute(idsParam.getParams())
@@ -586,7 +587,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 
 		List<Map<String, Object>> batchParams = members.stream()
 				.map(m -> paramsFromChannelMember(channelId, m))
-				.toList();
+				.collect(Collectors.toUnmodifiableList());
 
 		return withTransaction(c ->
 				forUpdate(c, getDialect().upsertChannelMember())
@@ -609,7 +610,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 
 							List<Map<String, Object>> batchParams = members.stream()
 									.map(m -> paramsFromChannelMember(channelId, m))
-									.toList();
+									.collect(Collectors.toUnmodifiableList());
 
 							return forUpdate(c, getDialect().upsertChannelMember()).executeBatch(batchParams);
 						}).<Void>mapEmpty()
@@ -636,7 +637,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 		if (memberId == null || memberId.isEmpty())
 			return Future.succeededFuture(Collections.emptyList());
 
-		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id", memberId.stream().map(Id::bytesUnsafe).toList());
+		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id", memberId.stream().map(Id::bytesUnsafe).collect(Collectors.toUnmodifiableList()));
 		Map<String, Object> params = idsParam.getParams();
 		params.put("channelId", channelId.bytesUnsafe());
 
@@ -667,7 +668,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 		if (memberIds.isEmpty())
 			return Future.succeededFuture(true);
 
-		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id", memberIds.stream().map(Id::bytesUnsafe).toList());
+		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id", memberIds.stream().map(Id::bytesUnsafe).collect(Collectors.toUnmodifiableList()));
 		Map<String, Object> params = idsParam.getParams();
 		params.put("channelId", channelId.bytesUnsafe());
 		params.put("role", role);
@@ -687,7 +688,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 		if (memberIds.isEmpty())
 			return Future.succeededFuture(true);
 
-		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id", memberIds.stream().map(Id::bytesUnsafe).toList());
+		CollectionParameter<byte[]> idsParam = new CollectionParameter<>("id", memberIds.stream().map(Id::bytesUnsafe).collect(Collectors.toUnmodifiableList()));
 		Map<String, Object> params = idsParam.getParams();
 		params.put("channelId", channelId.bytesUnsafe());
 
