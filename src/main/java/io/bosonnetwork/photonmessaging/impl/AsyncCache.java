@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiFunction;
 
 import io.vertx.core.Future;
@@ -35,6 +36,7 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.bosonnetwork.utils.MonotonicClock;
 import io.bosonnetwork.vertx.ContextualFuture;
 
 /**
@@ -47,8 +49,9 @@ import io.bosonnetwork.vertx.ContextualFuture;
  * does not exist on Android.
  *
  * <p>This implementation intentionally keeps the policy simple: entries expire lazily on reads,
- * writes and {@link #cleanUp()}, and size eviction scans for the least recently accessed entry when
- * the map grows beyond {@code maximumSize}. Concurrent loads for the same key are coalesced.
+ * writes and {@link #cleanUp()}, and size eviction scans for the least recently accessed entry, by the
+ * order of accesses rather than their times, when the map grows beyond {@code maximumSize}. Concurrent
+ * loads for the same key are coalesced.
  *
  * @param <K> the key type
  * @param <V> the value type
@@ -77,17 +80,21 @@ public final class AsyncCache<K, V> {
 
 	private static final long NO_EXPIRATION = Long.MAX_VALUE;
 	private final long maximumSize;
-	private final long expireAfterAccessNanos;
-	private final long expireAfterWriteNanos;
+	private final long expireAfterAccessMillis;
+	private final long expireAfterWriteMillis;
 	private final AsyncLoader<K, V> loader;
 	private final RemovalListener<? super K, ? super V> removalListener;
 	private final ConcurrentHashMap<K, CacheEntry<V>> store;
+	// Numbers every access, in order, for size eviction. The access time cannot order entries: two
+	// accesses within one tick of the clock - a millisecond, or a nanoTime that is coarser than its unit -
+	// read the same time, and the least recently used of them could not be told apart.
+	private final AtomicLong accessCounter = new AtomicLong();
 	private final Sync sync = new Sync();
 
 	private AsyncCache(Builder<K, V> builder, AsyncLoader<K, V> loader) {
 		this.maximumSize = builder.maximumSize;
-		this.expireAfterAccessNanos = builder.expireAfterAccessNanos;
-		this.expireAfterWriteNanos = builder.expireAfterWriteNanos;
+		this.expireAfterAccessMillis = builder.expireAfterAccessMillis;
+		this.expireAfterWriteMillis = builder.expireAfterWriteMillis;
 		this.loader = Objects.requireNonNull(loader, "loader");
 		this.removalListener = builder.removalListener;
 		this.store = new ConcurrentHashMap<>(builder.initialCapacity);
@@ -110,12 +117,12 @@ public final class AsyncCache<K, V> {
 
 	private CacheEntry<V> getEntry(K key) {
 		Objects.requireNonNull(key, "key");
-		long now = System.nanoTime();
+		long now = MonotonicClock.elapsedMillis();
 		Load<K, V> load = new Load<>();
 
 		CacheEntry<V> entry = store.compute(key, (k, current) -> {
 			if (isReusable(current, now)) {
-				current.lastAccessNanos = now;
+				current.accessed(now, accessCounter.incrementAndGet());
 				return current;
 			}
 
@@ -123,7 +130,7 @@ public final class AsyncCache<K, V> {
 				load.removed = new Removal<>(k, current, RemovalCause.EXPIRED);
 
 			load.loaded = true;
-			CacheEntry<V> created = new CacheEntry<>(loader.load(k), now);
+			CacheEntry<V> created = new CacheEntry<>(loader.load(k), now, accessCounter.incrementAndGet());
 			load.entry = created;
 			return created;
 		});
@@ -146,7 +153,7 @@ public final class AsyncCache<K, V> {
 	}
 
 	public void cleanUp() {
-		long now = System.nanoTime();
+		long now = MonotonicClock.elapsedMillis();
 		List<Removal<K, V>> removals = new ArrayList<>();
 		for (Map.Entry<K, CacheEntry<V>> e : store.entrySet()) {
 			CacheEntry<V> entry = e.getValue();
@@ -174,8 +181,8 @@ public final class AsyncCache<K, V> {
 	}
 
 	private boolean isExpired(CacheEntry<V> entry, long now) {
-		return elapsed(now, entry.lastAccessNanos) > expireAfterAccessNanos ||
-				elapsed(now, entry.writeNanos) > expireAfterWriteNanos;
+		return elapsed(now, entry.lastAccessMillis) > expireAfterAccessMillis ||
+				elapsed(now, entry.writeMillis) > expireAfterWriteMillis;
 	}
 
 	private long elapsed(long now, long then) {
@@ -195,7 +202,7 @@ public final class AsyncCache<K, V> {
 		while (store.size() > maximumSize) {
 			Map.@Nullable Entry<K, CacheEntry<V>> oldest = null;
 			for (Map.Entry<K, CacheEntry<V>> e : store.entrySet()) {
-				if (oldest == null || e.getValue().lastAccessNanos < oldest.getValue().lastAccessNanos)
+				if (oldest == null || e.getValue().lastAccessOrder < oldest.getValue().lastAccessOrder)
 					oldest = e;
 			}
 			if (oldest == null)
@@ -234,8 +241,8 @@ public final class AsyncCache<K, V> {
 	public static final class Builder<K, V> {
 		private int initialCapacity = 16;
 		private long maximumSize = Long.MAX_VALUE;
-		private long expireAfterAccessNanos = NO_EXPIRATION;
-		private long expireAfterWriteNanos = NO_EXPIRATION;
+		private long expireAfterAccessMillis = NO_EXPIRATION;
+		private long expireAfterWriteMillis = NO_EXPIRATION;
 		private RemovalListener<? super K, ? super V> removalListener = (key, value, cause) -> {
 		};
 
@@ -254,12 +261,12 @@ public final class AsyncCache<K, V> {
 		}
 
 		public Builder<K, V> expireAfterAccess(Duration duration) {
-			this.expireAfterAccessNanos = toNanos(duration, "expireAfterAccess");
+			this.expireAfterAccessMillis = toMillis(duration, "expireAfterAccess");
 			return this;
 		}
 
 		public Builder<K, V> expireAfterWrite(Duration duration) {
-			this.expireAfterWriteNanos = toNanos(duration, "expireAfterWrite");
+			this.expireAfterWriteMillis = toMillis(duration, "expireAfterWrite");
 			return this;
 		}
 
@@ -272,12 +279,12 @@ public final class AsyncCache<K, V> {
 			return new AsyncCache<>(this, loader);
 		}
 
-		private static long toNanos(Duration duration, String name) {
+		private static long toMillis(Duration duration, String name) {
 			Objects.requireNonNull(duration, name);
 			if (duration.isNegative())
 				throw new IllegalArgumentException(name + " must not be negative");
-			long nanos = duration.toNanos();
-			return nanos < 0 ? Long.MAX_VALUE : nanos;
+			long millis = duration.toMillis();
+			return millis < 0 ? Long.MAX_VALUE : millis;
 		}
 	}
 
@@ -291,7 +298,7 @@ public final class AsyncCache<K, V> {
 
 		public @Nullable V getIfPresent(K key) {
 			Objects.requireNonNull(key, "key");
-			long now = System.nanoTime();
+			long now = MonotonicClock.elapsedMillis();
 			Removal<K, V>[] removal = removalBox();
 			CacheEntry<V> entry = store.computeIfPresent(key, (k, current) -> {
 				if (!current.future.isComplete())
@@ -303,7 +310,7 @@ public final class AsyncCache<K, V> {
 						removal[0] = new Removal<>(k, current, RemovalCause.EXPIRED);
 					return null;
 				}
-				current.lastAccessNanos = now;
+				current.accessed(now, accessCounter.incrementAndGet());
 				return current;
 			});
 			notifyRemoval(removal[0]);
@@ -339,7 +346,7 @@ public final class AsyncCache<K, V> {
 		public @Nullable V compute(K key, BiFunction<? super K, ? super @Nullable V, ? extends @Nullable V> remappingFunction) {
 			Objects.requireNonNull(key, "key");
 			Objects.requireNonNull(remappingFunction, "remappingFunction");
-			long now = System.nanoTime();
+			long now = MonotonicClock.elapsedMillis();
 			Removal<K, V>[] removal = removalBox();
 
 			CacheEntry<V> entry = store.compute(key, (k, current) -> {
@@ -357,7 +364,7 @@ public final class AsyncCache<K, V> {
 					removal[0] = new Removal<>(k, current, currentValue == null &&
 							isCompletePresent(current) && isExpired(current, now) ?
 							RemovalCause.EXPIRED : RemovalCause.REPLACED);
-				return new CacheEntry<>(Future.succeededFuture(newValue), now);
+				return new CacheEntry<>(Future.succeededFuture(newValue), now, accessCounter.incrementAndGet());
 			});
 
 			notifyRemoval(removal[0]);
@@ -373,13 +380,21 @@ public final class AsyncCache<K, V> {
 
 	private static final class CacheEntry<V> {
 		final Future<V> future;
-		final long writeNanos;
-		volatile long lastAccessNanos;
+		final long writeMillis;
+		volatile long lastAccessMillis;
+		// The least recently used entry is the one with the lowest; see accessCounter.
+		volatile long lastAccessOrder;
 
-		CacheEntry(Future<V> future, long now) {
+		CacheEntry(Future<V> future, long now, long order) {
 			this.future = Objects.requireNonNull(future, "future");
-			this.writeNanos = now;
-			this.lastAccessNanos = now;
+			this.writeMillis = now;
+			this.lastAccessMillis = now;
+			this.lastAccessOrder = order;
+		}
+
+		void accessed(long now, long order) {
+			lastAccessMillis = now;
+			lastAccessOrder = order;
 		}
 	}
 
