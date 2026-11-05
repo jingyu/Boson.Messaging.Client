@@ -32,6 +32,7 @@ import io.bosonnetwork.photonmessaging.Contact;
 import io.bosonnetwork.photonmessaging.Conversation;
 import io.bosonnetwork.photonmessaging.InviteTicket;
 import io.bosonnetwork.photonmessaging.Message;
+import io.bosonnetwork.photonmessaging.MessageDeliveryReceipt;
 
 public class PhotonConversation implements Conversation {
 	public static final int MAX_SNIPPET_LENGTH = 128;
@@ -94,6 +95,11 @@ public class PhotonConversation implements Conversation {
 		}
 
 		return Optional.ofNullable(snippet);
+	}
+
+	@Override
+	public Optional<MessageDeliveryReceipt> getDeliveryFailure() {
+		return lastMessage == null ? Optional.empty() : lastMessage.getDeliveryFailure();
 	}
 
 	@Override

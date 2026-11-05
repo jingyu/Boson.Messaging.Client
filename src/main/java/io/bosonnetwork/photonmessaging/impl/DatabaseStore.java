@@ -50,6 +50,7 @@ import io.bosonnetwork.database.VersionedSchema;
 import io.bosonnetwork.database.VertxDatabase;
 import io.bosonnetwork.photonmessaging.Channel;
 import io.bosonnetwork.photonmessaging.Contact;
+import io.bosonnetwork.photonmessaging.DeliveryStatus;
 import io.bosonnetwork.photonmessaging.MessagingStore;
 import io.bosonnetwork.photonmessaging.exceptions.RepositoryException;
 import io.bosonnetwork.photonmessaging.impl.database.PostgresDatabase;
@@ -348,6 +349,36 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 			getLogger().error("Failed to update message sent time for {}", messageId, e);
 			return Future.failedFuture(new RepositoryException(e));
 		});
+	}
+
+	@Override
+	public Future<Void> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String deliveryReason, long deliveryAt) {
+		Map<String, Object> params = new HashMap<>();
+		params.put("id", messageId.bytesUnsafe());
+		params.put("deliveryStatus", status.value());
+		params.put("deliveryReason", deliveryReason);
+		params.put("deliveryAt", deliveryAt);
+
+		return withTransaction(c ->
+				forUpdate(c, getDialect().updateMessageDeliveryStatus())
+						.execute(params)
+						.<Void>mapEmpty()
+		).recover(e -> {
+			getLogger().error("Failed to update message delivery status for {}", messageId, e);
+			return Future.failedFuture(new RepositoryException(e));
+		});
+	}
+
+	@Override
+	public Future<@Nullable StoredMessage> getMessage(Id messageId) {
+		return withConnection(c ->
+				forQuery(c, getDialect().selectMessage())
+				.execute(Map.of("id", messageId.bytesUnsafe()))
+				.<@Nullable StoredMessage>map(rows -> findUnique(rows, this::rowToMessage))
+		).recover(e -> {
+			getLogger().error("Failed to get message {}", messageId, e);
+			return Future.failedFuture(new RepositoryException(e));
+		}).<@Nullable StoredMessage>map(message -> message);
 	}
 
 	@Override
@@ -721,6 +752,10 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 		params.put("contentType", message.contentType());
 		params.put("contentDisposition", message.contentDisposition());
 		params.put("payload", message.payload());
+		params.put("deliveryStatus", message.deliveryStatus().value());
+		params.put("deliveryReason", message.deliveryReason());
+		params.put("deliveryAt", message.deliveryAt());
+
 		return params;
 	}
 
@@ -738,11 +773,15 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 		byte[] payloadBytes = getBytes(row, "payload");
 		long sentAt = row.getLong("sent_at");
 		long receivedAt = row.getLong("received_at");
+		int s = row.getInteger("delivery_status");
+		DeliveryStatus status = DeliveryStatus.valueOf(s);
+		String reason = row.getString("delivery_reason");
+		long deliveryAt = row.getLong("delivery_at");
 
 		// StoredMessage carries the raw payload bytes; parsing into MessageContent happens once in the
 		// repository layer (toMessage). The payload column is nullable (BLOB/BYTEA DEFAULT NULL).
-		return new StoredMessage(rid, id, conversationId, version, recipient, type, fromId,
-				createdAt, contentType, contentDisposition, payloadBytes, sentAt, receivedAt);
+		return new StoredMessage(rid, id, conversationId, version, recipient, type, fromId, createdAt,
+				contentType, contentDisposition, payloadBytes, sentAt, receivedAt, status, reason, deliveryAt);
 	}
 
 	private Map<String, @Nullable Object> paramsFromFriendRequest(StoredFriendRequest request) {
@@ -855,12 +894,16 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 		byte[] msgPayloadBytes = getBytes(row, "last_message_payload");
 		long msgSentAt = row.getLong("last_message_sent_at");
 		long msgReceivedAt = row.getLong("last_message_received_at");
+		int s = row.getInteger("last_message_delivery_status");
+		DeliveryStatus msgDeliveryStatus = DeliveryStatus.valueOf(s);
+		String msgDeliveryReason = row.getString("last_message_delivery_reason");
+		long msgDeliveryAt = row.getLong("last_message_delivery_at");
 
 		// StoredMessage carries the raw payload bytes; parsing into MessageContent happens once in the
 		// repository layer (toMessage). The payload column is nullable (BLOB/BYTEA DEFAULT NULL).
 		StoredMessage lastMessage = new StoredMessage(msgRid, msgId, msgConversationId, msgVersion,
 				msgRecipient, msgType, msgFromId, msgCreatedAt, msgContentType, msgContentDisposition,
-				msgPayloadBytes, msgSentAt, msgReceivedAt);
+				msgPayloadBytes, msgSentAt, msgReceivedAt, msgDeliveryStatus, msgDeliveryReason, msgDeliveryAt);
 
 		return new StoredConversation(contact, lastMessage);
 	}

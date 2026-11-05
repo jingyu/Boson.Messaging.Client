@@ -19,6 +19,8 @@ import io.bosonnetwork.Id;
 import io.bosonnetwork.crypto.Random;
 import io.bosonnetwork.json.Json;
 import io.bosonnetwork.photonmessaging.Channel;
+import io.bosonnetwork.photonmessaging.DeliveryStatus;
+import io.bosonnetwork.photonmessaging.MessageDeliveryReceipt;
 import io.bosonnetwork.photonmessaging.SessionInfo;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelInfo;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelMembersRole;
@@ -53,6 +55,10 @@ public class NotificationTests {
 		notifications.add(Arguments.of(Notification.Event.CONTACT_SYNC,
 				new Notification(Id.random(), Id.random(), System.currentTimeMillis(), Notification.Event.CONTACT_SYNC,
 						new ContactSync(10, ContactSync.Type.DELTA, List.of(mutation), null))));
+
+		notifications.add(Arguments.of(Notification.Event.MESSAGE_DELIVERY_RECEIPT,
+				new Notification(Id.random(), Id.random(), System.currentTimeMillis(), Notification.Event.MESSAGE_DELIVERY_RECEIPT,
+						new MessageDeliveryReceipt(Id.random(), DeliveryStatus.RECIPIENT_UNRESOLVED, null, 123456))));
 
 		notifications.add(Arguments.of(Notification.Event.CHANNEL_CREATE,
 				new Notification(Id.random(), Id.random(), System.currentTimeMillis(), Notification.Event.CHANNEL_CREATE, channelInfo)));

@@ -32,6 +32,7 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.ObjectWriter;
 
 import io.bosonnetwork.Id;
+import io.bosonnetwork.photonmessaging.MessageDeliveryReceipt;
 import io.bosonnetwork.json.Json;
 import io.bosonnetwork.photonmessaging.SessionInfo;
 import io.bosonnetwork.photonmessaging.impl.dto.ChannelInfo;
@@ -164,6 +165,7 @@ public class Notification implements DeviceOriginated {
 	@JsonSubTypes({
 			@JsonSubTypes.Type(value = SessionInfo.class, name = "sn"),
 			@JsonSubTypes.Type(value = ContactSync.class, name = "cs"),
+			@JsonSubTypes.Type(value = MessageDeliveryReceipt.class, name = "dr"),
 			@JsonSubTypes.Type(value = ChannelInfo.class, name = "cc"),
 			@JsonSubTypes.Type(value = Void.class, name = "cd"),
 			@JsonSubTypes.Type(value = ChannelInfo.class, name = "cj"),
@@ -185,6 +187,8 @@ public class Notification implements DeviceOriginated {
 		SESSION_NEW(1),
 		@JsonProperty("cs")
 		CONTACT_SYNC(2),
+		@JsonProperty("dr")
+		MESSAGE_DELIVERY_RECEIPT(3),
 		@JsonProperty("cc")
 		CHANNEL_CREATE(21),
 		@JsonProperty("cd")
@@ -226,6 +230,7 @@ public class Notification implements DeviceOriginated {
 			return switch (value) {
 				case 1 -> SESSION_NEW;
 				case 2 -> CONTACT_SYNC;
+				case 3 -> MESSAGE_DELIVERY_RECEIPT;
 				case 21 -> CHANNEL_CREATE;
 				case 22 -> CHANNEL_DELETE;
 				case 23 -> CHANNEL_JOIN;

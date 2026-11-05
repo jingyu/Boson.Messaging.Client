@@ -72,20 +72,10 @@ public interface MessagingStore {
 	 * @param sentAt the time the message was sent, in milliseconds since the epoch
 	 * @param receivedAt the time the message was received, in milliseconds since the epoch
 	 */
-	record StoredMessage(
-			long rid,
-			Id id,
-			Id conversationId,
-			int version,
-			Id recipient,
-			int type,
-			@Nullable Id from,
-			long createdAt,
-			@Nullable String contentType,
-			@Nullable String contentDisposition,
-			byte @Nullable [] payload,
-			long sentAt,
-			long receivedAt) {
+	record StoredMessage(long rid, Id id, Id conversationId, int version, Id recipient, int type, @Nullable Id from,
+						 long createdAt, @Nullable String contentType, @Nullable String contentDisposition,
+						 byte @Nullable [] payload, long sentAt, long receivedAt, DeliveryStatus deliveryStatus,
+						 @Nullable String deliveryReason, long deliveryAt) {
 	}
 
 	/**
@@ -97,12 +87,7 @@ public interface MessagingStore {
 	 * @param notice the channel notice text, or {@code null}
 	 * @param announce whether the channel is in announce-only mode
 	 */
-	record StoredChannel(
-			Id id,
-			Id owner,
-			int permission,
-			@Nullable String notice,
-			boolean announce) {
+	record StoredChannel(Id id, Id owner, int permission, @Nullable String notice, boolean announce) {
 	}
 
 	/**
@@ -121,19 +106,9 @@ public interface MessagingStore {
 	 * @param updatedAt the last update time, in milliseconds since the epoch
 	 * @param channel the channel row, non-null when the contact is a channel, otherwise {@code null}
 	 */
-	record StoredContact(
-			Id id,
-			int type,
-			byte @Nullable [] sessionKey,
-			@Nullable String name,
-			@Nullable String remark,
-			@Nullable String tags,
-			boolean muted,
-			boolean blocked,
-			int revision,
-			long createdAt,
-			long updatedAt,
-			@Nullable StoredChannel channel) {
+	record StoredContact(Id id, int type, byte @Nullable [] sessionKey, @Nullable String name, @Nullable String remark,
+						 @Nullable String tags, boolean muted, boolean blocked, int revision, long createdAt,
+						 long updatedAt, @Nullable StoredChannel channel) {
 	}
 
 	/**
@@ -144,11 +119,7 @@ public interface MessagingStore {
 	 * @param role the member's role, carried as its stable integer value
 	 * @param joined the time the member joined, in milliseconds since the epoch
 	 */
-	record StoredChannelMember(
-			Id id,
-			Id channelId,
-			int role,
-			long joined) {
+	record StoredChannelMember(Id id, Id channelId, int role, long joined) {
 	}
 
 	/**
@@ -162,14 +133,8 @@ public interface MessagingStore {
 	 * @param accepted whether the request has been accepted
 	 * @param acceptedAt the time the request was accepted, in milliseconds since the epoch
 	 */
-	record StoredFriendRequest(
-			Id id,
-			Id initiator,
-			@Nullable String hello,
-			long createdAt,
-			long updatedAt,
-			boolean accepted,
-			long acceptedAt) {
+	record StoredFriendRequest(Id id, Id initiator, @Nullable String hello, long createdAt, long updatedAt,
+							   boolean accepted, long acceptedAt) {
 	}
 
 	/**
@@ -217,6 +182,25 @@ public interface MessagingStore {
 	 * @return a future completing when the sent time is updated
 	 */
 	Future<Void> updateMessageSentTime(Id messageId, long sentAt);
+
+	/**
+	 * Updates the delivery status for a message.
+	 *
+	 * @param messageId the identifier of the message whose delivery status is being updated
+	 * @param status the delivery status to set
+	 * @param deliveryReason the reason associated with the delivery status
+	 * @param deliveryAt the timestamp representing when the delivery occurred
+	 * @return a future that completes when the delivery status update has been processed
+	 */
+	Future<Void> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String deliveryReason, long deliveryAt);
+
+	/**
+	 * Looks up a message by application ID for validating an incoming outcome.
+	 *
+	 * @param messageId the application ID of the message to retrieve
+	 * @return a future containing the stored message, or null if no message is found
+	 */
+	Future<@Nullable StoredMessage> getMessage(Id messageId);
 
 	/**
 	 * Retrieves the messages of a conversation within a time range, ordered by {@code rid} ascending.

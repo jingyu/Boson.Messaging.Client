@@ -299,3 +299,34 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
+
+## Terminal delivery outcomes
+
+`onSent` reports home-service acceptance. It does not confirm receipt by another device. A supporting
+home service can later report that it has stopped retrying an authored content submission:
+
+```java
+client.addMessageListener(new AbstractMessageListener() {
+    @Override
+    public void onDeliveryFailed(MessageDeliveryFailure failure) {
+        // The outcome is already persisted. Refresh the matching message/conversation from storage.
+        showDeliveryFailure(failure.getMessageId(), failure.getRecipientId(), failure.getReason());
+    }
+});
+```
+
+`Message.getDeliveryFailure()` and `Conversation.getDeliveryFailure()` expose the persisted outcome
+on message/history loads and the latest conversation message. Duplicate notices preserve the first
+outcome without another callback. The local store can record an outcome before its outbox copy
+arrives, and publish acknowledgments do not erase it. Custom `MessagingStore` implementations must
+implement the explicit outcome operations with the same persistence and insert-if-absent semantics.
+
+Reasons are `federation_refused`, `not_federating`, `recipient_unresolved`, `recipient_unknown` and
+`expired`; handle future reason strings with a generic failure display. For `expired`, say "delivery
+not confirmed": an earlier attempt might have arrived. An explicit manual retry creates a new
+application message ID and may reuse valid attachment references. Do not automatically resend.
+
+Delivery-failure notifications are a basic feature with no CONNECT capability property. Only
+authenticated home-peer notifications are accepted. Older clients can ignore and log an unknown event. Recovery uses existing session offline notifications and their retention limits; there is
+no synchronization cursor or guarantee of historical outcomes for newly registered devices.

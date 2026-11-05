@@ -22,8 +22,6 @@
 
 package io.bosonnetwork.photonmessaging;
 
-import io.bosonnetwork.Id;
-
 /**
  * Listener for message-related events.
  */
@@ -41,4 +39,11 @@ public interface MessageListener {
 	 * @param message the sent message
 	 */
 	void onSent(Message message);
+
+	/**
+	 * Called when a message delivery receipt is received.
+	 *
+	 * @param receipt the delivery receipt containing the message delivery status
+	 */
+	void onDeliveryReceipt(MessageDeliveryReceipt receipt);
 }

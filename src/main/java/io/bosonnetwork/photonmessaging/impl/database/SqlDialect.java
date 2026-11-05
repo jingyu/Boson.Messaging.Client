@@ -46,8 +46,10 @@ public class SqlDialect {
 	// Contacts
 	public String upsertContact() {
 		return """
-				INSERT INTO contacts (id, type, session_key, name, remark, tags, muted, blocked, revision, created_at, updated_at)
-				VALUES (#{id}, #{type}, #{sessionKey}, #{name}, #{remark}, #{tags}, #{muted}, #{blocked}, #{revision}, #{createdAt}, #{updatedAt})
+				INSERT INTO contacts (id, type, session_key, name, remark, tags, muted,
+						blocked, revision, created_at, updated_at)
+				VALUES (#{id}, #{type}, #{sessionKey}, #{name}, #{remark}, #{tags}, #{muted},
+						#{blocked}, #{revision}, #{createdAt}, #{updatedAt})
 				ON CONFLICT (id) DO UPDATE SET
 					type = EXCLUDED.type,
 					session_key = EXCLUDED.session_key,
@@ -201,14 +203,29 @@ public class SqlDialect {
 	// Messages
 	public String insertMessage() {
 		return """
-				INSERT INTO messages (id, conversation_id, version, recipient, type, from_id, created_at, sent_at, received_at, content_type, content_disposition, payload)
-				VALUES (#{id}, #{conversationId}, #{version}, #{recipient}, #{type}, #{fromId}, #{createdAt}, #{sentAt}, #{receivedAt}, #{contentType}, #{contentDisposition}, #{payload})
+				INSERT INTO messages (id, conversation_id, version, recipient, type, from_id, created_at, sent_at,
+						received_at, content_type, content_disposition, payload, delivery_status, delivery_reason, delivery_at)
+				VALUES (#{id}, #{conversationId}, #{version}, #{recipient}, #{type}, #{fromId}, #{createdAt}, #{sentAt},
+						#{receivedAt}, #{contentType}, #{contentDisposition}, #{payload}, #{deliveryStatus}, #{deliveryReason}, #{deliveryAt})
 				RETURNING rid
 				""";
 	}
 
 	public String updateMessageSentTime() {
 		return "UPDATE messages SET sent_at = #{sentAt} WHERE id = #{id}";
+	}
+
+	public String updateMessageDeliveryStatus() {
+		return """
+				UPDATE messages SET delivery_status = #{deliveryStatus},
+					delivery_reason = #{deliveryReason},
+					delivery_at = #{deliveryAt}
+				WHERE id = #{id}
+				""";
+	}
+
+	public String selectMessage() {
+		return "SELECT * FROM messages WHERE id = #{id}";
 	}
 
 	public String selectMessagesByTimeRange() {
@@ -254,7 +271,9 @@ public class SqlDialect {
 					m.recipient as last_message_recipient, m.type as last_message_type, m.from_id as last_message_from_id,
 					m.created_at as last_message_created_at, m.content_type as last_message_content_type,
 					m.content_disposition as last_message_content_disposition, m.payload as last_message_payload,
-					m.sent_at as last_message_sent_at, m.received_at as last_message_received_at
+					m.sent_at as last_message_sent_at, m.received_at as last_message_received_at,
+					m.delivery_status as last_message_delivery_status, m.delivery_reason as last_message_delivery_reason,
+					m.delivery_at as last_message_delivery_at
 				FROM contacts c
 				LEFT JOIN channels ch ON c.id = ch.id
 				JOIN messages m ON c.id = m.conversation_id
@@ -274,7 +293,9 @@ public class SqlDialect {
 					m.recipient as last_message_recipient, m.type as last_message_type, m.from_id as last_message_from_id,
 					m.created_at as last_message_created_at, m.content_type as last_message_content_type,
 					m.content_disposition as last_message_content_disposition, m.payload as last_message_payload,
-					m.sent_at as last_message_sent_at, m.received_at as last_message_received_at
+					m.sent_at as last_message_sent_at, m.received_at as last_message_received_at,
+					m.delivery_status as last_message_delivery_status, m.delivery_reason as last_message_delivery_reason,
+					m.delivery_at as last_message_delivery_at
 				FROM contacts c
 				LEFT JOIN channels ch ON c.id = ch.id
 				JOIN (

@@ -35,7 +35,9 @@ import org.jspecify.annotations.Nullable;
 
 import io.bosonnetwork.Id;
 import io.bosonnetwork.json.Json;
+import io.bosonnetwork.photonmessaging.DeliveryStatus;
 import io.bosonnetwork.photonmessaging.Message;
+import io.bosonnetwork.photonmessaging.MessageDeliveryReceipt;
 import io.bosonnetwork.photonmessaging.impl.rpc.RpcRequest;
 import io.bosonnetwork.photonmessaging.impl.rpc.RpcResponse;
 
@@ -66,6 +68,10 @@ public class PhotonMessage<P> implements Message, DeviceOriginated {
 	private long sentAt;
 	private long receivedAt;
 
+	private DeliveryStatus deliveryStatus;
+	private @Nullable String deliveryReason;
+	private long deliveryAt;
+
 	private volatile @Nullable Promise<Void> sentPromise;
 
 	// The 'from' field is required for incoming wire messages but omitted for outgoing ones.
@@ -89,6 +95,7 @@ public class PhotonMessage<P> implements Message, DeviceOriginated {
 		this.type = type;
 		this.createdAt = createdAt;
 		this.payload = payload;
+		this.deliveryStatus = DeliveryStatus.UNDELIVERED;
 	}
 
 	protected PhotonMessage(Id id, Id recipient, Type type, long createAt, P payload) {
@@ -96,18 +103,19 @@ public class PhotonMessage<P> implements Message, DeviceOriginated {
 	}
 
 	protected PhotonMessage(long rid, @Nullable Id conversationId, int version, Id id, Id recipient, Type type, @Nullable Id from,
-	                        long createdAt, P payload, long sentAt, long receivedAt) {
-			this.rid = rid;
-			this.conversationId = conversationId;
-			this.version = version;
-			this.id = id;
-			this.recipient = recipient;
-			this.type = type;
-			this.from = from;
-			this.createdAt = createdAt;
-			this.payload = payload;
-			this.sentAt = sentAt;
-			this.receivedAt = receivedAt;
+							long createdAt, P payload, long sentAt, long receivedAt) {
+		this.rid = rid;
+		this.conversationId = conversationId;
+		this.version = version;
+		this.id = id;
+		this.recipient = recipient;
+		this.type = type;
+		this.from = from;
+		this.createdAt = createdAt;
+		this.payload = payload;
+		this.sentAt = sentAt;
+		this.receivedAt = receivedAt;
+		this.deliveryStatus = DeliveryStatus.UNDELIVERED;
 	}
 
 	protected PhotonMessage(PhotonMessage<?> message, P newPayload) {
@@ -120,9 +128,20 @@ public class PhotonMessage<P> implements Message, DeviceOriginated {
 		this.payload = newPayload;
 
 		this.conversationId = message.conversationId;
+		this.deliveryFailure = message.deliveryFailure;
 		this.sentAt = message.sentAt;
 		this.receivedAt = message.receivedAt;
+		this.deliveryStatus = message.deliveryStatus;
+		this.deliveryReason = message.deliveryReason;
+		this.deliveryAt = message.deliveryAt;
 	}
+
+	private @Nullable MessageDeliveryReceipt deliveryFailure;
+
+	@Override
+	public Optional<MessageDeliveryReceipt> getDeliveryFailure() { return Optional.ofNullable(deliveryFailure); }
+
+	void setDeliveryFailure(@Nullable MessageDeliveryReceipt failure) { this.deliveryFailure = failure; }
 
 	public int getVersion() {
 		return version;
@@ -255,6 +274,18 @@ public class PhotonMessage<P> implements Message, DeviceOriginated {
 
 	protected P getPayload() {
 		return payload;
+	}
+
+	public DeliveryStatus getDeliveryStatus() {
+		return deliveryStatus;
+	}
+
+	public @Nullable String getDeliveryReason() {
+		return deliveryReason;
+	}
+
+	public long getDeliveryAt() {
+		return deliveryAt;
 	}
 
 	protected void prepareForSending() {

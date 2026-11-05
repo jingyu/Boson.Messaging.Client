@@ -183,6 +183,16 @@ public interface Message {
 	Content getPayloadAsContent();
 
 	/**
+	 * Returns the persisted terminal outcome of this outgoing content message, when known.
+	 * Home-service acceptance and publish acknowledgments do not clear this outcome.
+	 *
+	 * @return the failure, or empty when no terminal outcome has been received
+	 */
+	default Optional<MessageDeliveryReceipt> getDeliveryFailure() {
+		return Optional.empty();
+	}
+
+	/**
 	 * Represents the content of a message, providing access to its metadata and body.
 	 */
 	interface Content {

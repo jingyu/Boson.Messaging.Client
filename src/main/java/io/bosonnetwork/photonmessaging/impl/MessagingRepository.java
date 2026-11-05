@@ -38,6 +38,7 @@ import io.bosonnetwork.photonmessaging.Channel;
 import io.bosonnetwork.photonmessaging.Contact;
 import io.bosonnetwork.photonmessaging.ContentDisposition;
 import io.bosonnetwork.photonmessaging.Conversation;
+import io.bosonnetwork.photonmessaging.DeliveryStatus;
 import io.bosonnetwork.photonmessaging.FriendRequest;
 import io.bosonnetwork.photonmessaging.Message;
 import io.bosonnetwork.photonmessaging.MessagingStore;
@@ -96,6 +97,10 @@ class MessagingRepository {
 
 	public Future<Void> updateMessageSentTime(PhotonMessage<MessageContent> message) {
 		return store.updateMessageSentTime(message.getId(), message.getSentAt());
+	}
+
+	public Future<Void> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String reason, long deliveryAt) {
+		return store.updateMessageDeliveryStatus(messageId, status, reason, deliveryAt);
 	}
 
 	public Future<List<PhotonMessage<MessageContent>>> getMessagesInRange(Id conversationId, long begin, long end) {
@@ -295,7 +300,10 @@ class MessagingRepository {
 				content.getContentDisposition().map(ContentDisposition::getValue).orElse(null),
 				content.serialize(),
 				message.getSentAt(),
-				message.getReceivedAt());
+				message.getReceivedAt(),
+				message.getDeliveryStatus(),
+				message.getDeliveryReason(),
+				message.getDeliveryAt());
 	}
 
 	private StoredContact toRecord(Contact contact) {

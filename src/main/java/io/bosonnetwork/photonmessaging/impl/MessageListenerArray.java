@@ -27,6 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.slf4j.Logger;
 
 import io.bosonnetwork.photonmessaging.Message;
+import io.bosonnetwork.photonmessaging.MessageDeliveryReceipt;
 import io.bosonnetwork.photonmessaging.MessageListener;
 
 public class MessageListenerArray extends CopyOnWriteArrayList<MessageListener> implements MessageListener {
@@ -58,6 +59,13 @@ public class MessageListenerArray extends CopyOnWriteArrayList<MessageListener> 
 			} catch (Throwable t) {
 				log.error("Error dispatching onSent to listener: {}", listener, t);
 			}
+		}
+	}
+	@Override
+	public void onDeliveryReceipt(MessageDeliveryReceipt receipt) {
+		for (MessageListener listener : this) {
+			try { listener.onDeliveryReceipt(receipt); }
+			catch (Throwable t) { log.error("Error dispatching delivery failure to listener: {}", listener, t); }
 		}
 	}
 }

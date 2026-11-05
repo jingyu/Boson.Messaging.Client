@@ -37,6 +37,7 @@ import io.bosonnetwork.photonmessaging.Contact;
 import io.bosonnetwork.photonmessaging.ContactListener;
 import io.bosonnetwork.photonmessaging.FriendRequestListener;
 import io.bosonnetwork.photonmessaging.Message;
+import io.bosonnetwork.photonmessaging.MessageDeliveryReceipt;
 import io.bosonnetwork.photonmessaging.MessageListener;
 import io.bosonnetwork.photonmessaging.SessionInfo;
 import io.bosonnetwork.photonmessaging.SessionListener;
@@ -167,6 +168,18 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 				listener.onSent(message);
 			} catch (Throwable t) {
 				log.error("Error dispatching onSent to listener: {}", listener, t);
+			}
+		}
+	}
+
+	@Override
+	public void onDeliveryReceipt(MessageDeliveryReceipt receipt) {
+		MessageListener listener = messageListener;
+		if (listener != null) {
+			try {
+				listener.onDeliveryReceipt(receipt);
+			} catch (Throwable t) {
+				log.error("Error dispatching onDeliveryReceipt to listener: {}", listener, t);
 			}
 		}
 	}

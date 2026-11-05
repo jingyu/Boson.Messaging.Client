@@ -82,6 +82,7 @@ import io.bosonnetwork.photonmessaging.FriendRequest;
 import io.bosonnetwork.photonmessaging.FriendRequestListener;
 import io.bosonnetwork.photonmessaging.InviteTicket;
 import io.bosonnetwork.photonmessaging.Message;
+import io.bosonnetwork.photonmessaging.MessageDeliveryReceipt;
 import io.bosonnetwork.photonmessaging.MessageListener;
 import io.bosonnetwork.photonmessaging.MessagingClient;
 import io.bosonnetwork.photonmessaging.MessagingStore;
@@ -2398,6 +2399,12 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 	private Future<Void> processHomePeerNotification(Notification notif) {
 		// notification from home peer
 		return switch (notif.getEvent()) {
+			case MESSAGE_DELIVERY_RECEIPT -> {
+				MessageDeliveryReceipt receipt = notif.getBody();
+				yield repository.updateMessageDeliveryStatus(receipt.getMessageId(), receipt.getStatus(), receipt.getReason(), receipt.getTimestamp())
+						.andThen(ar -> listeners.onDeliveryReceipt(receipt));
+			}
+
 			case SESSION_NEW -> {
 				SessionInfo si = notif.getBody();
 				listeners.onNewSession(si);

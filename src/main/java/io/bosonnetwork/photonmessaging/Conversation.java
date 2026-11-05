@@ -62,6 +62,15 @@ public interface Conversation extends Comparable<Conversation> {
 	Optional<String> getPreview();
 
 	/**
+	 * Returns the terminal delivery outcome attached to the most recent message, if any.
+	 *
+	 * @return the latest message's failure, or empty
+	 */
+	default Optional<MessageDeliveryReceipt> getDeliveryFailure() {
+		return Optional.empty();
+	}
+
+	/**
 	 * Returns the timestamp of when the conversation was last updated.
 	 *
 	 * @return the update timestamp in milliseconds
