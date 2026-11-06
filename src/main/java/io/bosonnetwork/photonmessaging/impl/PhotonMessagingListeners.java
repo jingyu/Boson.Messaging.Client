@@ -25,6 +25,8 @@ package io.bosonnetwork.photonmessaging.impl;
 import java.util.List;
 import java.util.Objects;
 
+import io.vertx.core.Context;
+import io.vertx.core.Vertx;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,8 +60,204 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 
 	private static final Logger log = LoggerFactory.getLogger(PhotonMessagingListeners.class);
 
+	static abstract class ContextualListener<T> {
+		protected final T listener;
+		protected final @Nullable Context vertxContext;
+
+		protected ContextualListener(T listener) {
+			this.listener = listener;
+			this.vertxContext = Vertx.currentContext();
+		}
+
+		protected final void dispatch(String event, Runnable callback) {
+			Runnable action = () -> {
+				try {
+					callback.run();
+				} catch (Throwable t) {
+					log.error("Error dispatching {} to listener: {}", event, listener, t);
+				}
+			};
+			if (vertxContext != null)
+				vertxContext.runOnContext(v -> action.run());
+			else
+				action.run();
+		}
+	}
+
+	static class ContextualConnectionListener extends ContextualListener<ConnectionListener> implements ConnectionListener {
+		public ContextualConnectionListener(ConnectionListener listener) {
+			super(listener);
+		}
+
+		@Override
+		public void onConnecting() {
+			dispatch("onConnecting", listener::onConnecting);
+		}
+
+		@Override
+		public void onConnected() {
+			dispatch("onConnected", listener::onConnected);
+		}
+
+		@Override
+		public void onContactSynced() {
+			dispatch("onContactSynced", listener::onContactSynced);
+		}
+
+		@Override
+		public void onDisconnected() {
+			dispatch("onDisconnected", listener::onDisconnected);
+		}
+	}
+
+	static class ContextualMessageListener extends ContextualListener<MessageListener> implements MessageListener {
+		public ContextualMessageListener(MessageListener listener) {
+			super(listener);
+		}
+
+		@Override
+		public void onMessage(Message message) {
+			dispatch("onMessage", () -> listener.onMessage(message));
+		}
+
+		@Override
+		public void onSent(Message message) {
+			dispatch("onSent", () -> listener.onSent(message));
+		}
+
+		@Override
+		public void onDeliveryReceipt(MessageDeliveryReceipt receipt) {
+			dispatch("onDeliveryReceipt", () -> listener.onDeliveryReceipt(receipt));
+		}
+	}
+
+	static class ContextualContactListener extends ContextualListener<ContactListener> implements ContactListener {
+		public ContextualContactListener(ContactListener listener) {
+			super(listener);
+		}
+
+		@Override
+		public void onContactAdded(Contact contact) {
+			dispatch("onContactAdded", () -> listener.onContactAdded(contact));
+		}
+
+		@Override
+		public void onContactsUpdated(List<Contact> contacts) {
+			dispatch("onContactsUpdated", () -> listener.onContactsUpdated(contacts));
+		}
+
+		@Override
+		public void onContactsRemoved(List<Id> contactIds) {
+			dispatch("onContactsRemoved", () -> listener.onContactsRemoved(contactIds));
+		}
+
+		@Override
+		public void onContactsCleared() {
+			dispatch("onContactsCleared", listener::onContactsCleared);
+		}
+	}
+
+	static class ContextualChannelListener extends ContextualListener<ChannelListener> implements ChannelListener {
+		public ContextualChannelListener(ChannelListener listener) {
+			super(listener);
+		}
+
+		@Override
+		public void onChannelCreated(Channel channel) {
+			dispatch("onChannelCreated", () -> listener.onChannelCreated(channel));
+		}
+
+		@Override
+		public void onChannelDeleted(Channel channel) {
+			dispatch("onChannelDeleted", () -> listener.onChannelDeleted(channel));
+		}
+
+		@Override
+		public void onJoinedChannel(Channel channel) {
+			dispatch("onJoinedChannel", () -> listener.onJoinedChannel(channel));
+		}
+
+		@Override
+		public void onLeftChannel(Channel channel) {
+			dispatch("onLeftChannel", () -> listener.onLeftChannel(channel));
+		}
+
+		@Override
+		public void onChannelOwnershipTransferred(Channel channel, Id oldOwner, Id newOwner) {
+			dispatch("onChannelOwnershipTransferred", () -> listener.onChannelOwnershipTransferred(channel, oldOwner, newOwner));
+		}
+
+		@Override
+		public void onChannelSessionKeyRotated(Channel channel) {
+			dispatch("onChannelSessionKeyRotated", () -> listener.onChannelSessionKeyRotated(channel));
+		}
+
+		@Override
+		public void onChannelUpdated(Channel channel) {
+			dispatch("onChannelUpdated", () -> listener.onChannelUpdated(channel));
+		}
+
+		@Override
+		public void onChannelMemberJoined(Channel channel, Channel.Member member) {
+			dispatch("onChannelMemberJoined", () -> listener.onChannelMemberJoined(channel, member));
+		}
+
+		@Override
+		public void onChannelMemberLeft(Channel channel, Channel.Member member) {
+			dispatch("onChannelMemberLeft", () -> listener.onChannelMemberLeft(channel, member));
+		}
+
+		@Override
+		public void onChannelMembersRemoved(Channel channel, List<Channel.Member> members) {
+			dispatch("onChannelMembersRemoved", () -> listener.onChannelMembersRemoved(channel, members));
+		}
+
+		@Override
+		public void onChannelMembersBanned(Channel channel, List<Channel.Member> banned) {
+			dispatch("onChannelMembersBanned", () -> listener.onChannelMembersBanned(channel, banned));
+		}
+
+		@Override
+		public void onChannelMembersUnbanned(Channel channel, List<Channel.Member> unbanned) {
+			dispatch("onChannelMembersUnbanned", () -> listener.onChannelMembersUnbanned(channel, unbanned));
+		}
+
+		@Override
+		public void onChannelMembersRoleChanged(Channel channel, List<Channel.Member> changed, Channel.Role role) {
+			dispatch("onChannelMembersRoleChanged", () -> listener.onChannelMembersRoleChanged(channel, changed, role));
+		}
+	}
+
+	static class ContextualSessionListener extends ContextualListener<SessionListener> implements SessionListener {
+		public ContextualSessionListener(SessionListener listener) {
+			super(listener);
+		}
+
+		@Override
+		public void onNewSession(SessionInfo sessionInfo) {
+			dispatch("onNewSession", () -> listener.onNewSession(sessionInfo));
+		}
+	}
+
+	static class ContextualFriendRequestListener extends ContextualListener<FriendRequestListener> implements FriendRequestListener {
+		public ContextualFriendRequestListener(FriendRequestListener listener) {
+			super(listener);
+		}
+
+		@Override
+		public void onFriendRequest(Id userId, String hello) {
+			dispatch("onFriendRequest", () -> listener.onFriendRequest(userId, hello));
+		}
+
+		@Override
+		public void onFriendRequestAccepted(Id userId) {
+			dispatch("onFriendRequestAccepted", () -> listener.onFriendRequestAccepted(userId));
+		}
+	}
+
 	public void addConnectionListener(ConnectionListener listener) {
 		Objects.requireNonNull(listener, "listener");
+		listener = new ContextualConnectionListener(listener);
 		synchronized (listenersLock) {
 			if (connectionListener instanceof ConnectionListenerArray listeners)
 				listeners.add(listener);
@@ -72,7 +270,12 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 		Objects.requireNonNull(listener, "listener");
 		synchronized (listenersLock) {
 			if (connectionListener instanceof ConnectionListenerArray listeners) {
-				listeners.remove(listener);
+				listeners.removeIf(l -> {
+					if (l instanceof ContextualConnectionListener cl)
+						return cl.listener == listener;
+					else
+						return l == listener;
+				});
 				if (listeners.isEmpty())
 					connectionListener = null;
 			}
@@ -129,6 +332,7 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 
 	public void addMessageListener(MessageListener listener) {
 		Objects.requireNonNull(listener, "listener");
+		listener = new ContextualMessageListener(listener);
 		synchronized (listenersLock) {
 			if (messageListener instanceof MessageListenerArray listeners)
 				listeners.add(listener);
@@ -141,7 +345,12 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 		Objects.requireNonNull(listener, "listener");
 		synchronized (listenersLock) {
 			if (messageListener instanceof MessageListenerArray listeners) {
-				listeners.remove(listener);
+				listeners.removeIf(l -> {
+					if (l instanceof ContextualMessageListener cl)
+						return cl.listener == listener;
+					else
+						return l == listener;
+				});
 				if (listeners.isEmpty())
 					messageListener = null;
 			}
@@ -186,6 +395,7 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 
 	public void addContactListener(ContactListener listener) {
 		Objects.requireNonNull(listener, "listener");
+		listener = new ContextualContactListener(listener);
 		synchronized (listenersLock) {
 			if (contactListener instanceof ContactListenerArray listeners)
 				listeners.add(listener);
@@ -198,7 +408,12 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 		Objects.requireNonNull(listener, "listener");
 		synchronized (listenersLock) {
 			if (contactListener instanceof ContactListenerArray listeners) {
-				listeners.remove(listener);
+				listeners.removeIf(l -> {
+					if (l instanceof ContextualContactListener cl)
+						return cl.listener == listener;
+					else
+						return l == listener;
+				});
 				if (listeners.isEmpty())
 					contactListener = null;
 			}
@@ -255,6 +470,7 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 
 	public void addChannelListener(ChannelListener listener) {
 		Objects.requireNonNull(listener, "listener");
+		listener = new ContextualChannelListener(listener);
 		synchronized (listenersLock) {
 			if (channelListener instanceof ChannelListenerArray listeners)
 				listeners.add(listener);
@@ -267,7 +483,12 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 		Objects.requireNonNull(listener, "listener");
 		synchronized (listenersLock) {
 			if (channelListener instanceof ChannelListenerArray listeners) {
-				listeners.remove(listener);
+				listeners.removeIf(l -> {
+					if (l instanceof ContextualChannelListener cl)
+						return cl.listener == listener;
+					else
+						return l == listener;
+				});
 				if (listeners.isEmpty())
 					channelListener = null;
 			}
@@ -432,6 +653,7 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 
 	public void addSessionListener(SessionListener listener) {
 		Objects.requireNonNull(listener, "listener");
+		listener = new ContextualSessionListener(listener);
 		synchronized (listenersLock) {
 			if (sessionListener instanceof SessionListenerArray listeners)
 				listeners.add(listener);
@@ -444,7 +666,12 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 		Objects.requireNonNull(listener, "listener");
 		synchronized (listenersLock) {
 			if (sessionListener instanceof SessionListenerArray listeners) {
-				listeners.remove(listener);
+				listeners.removeIf(l -> {
+					if (l instanceof ContextualSessionListener cl)
+						return cl.listener == listener;
+					else
+						return l == listener;
+				});
 				if (listeners.isEmpty())
 					sessionListener = null;
 			}
@@ -465,6 +692,7 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 
 	public void addFriendRequestListener(FriendRequestListener listener) {
 		Objects.requireNonNull(listener, "listener");
+		listener = new ContextualFriendRequestListener(listener);
 		synchronized (listenersLock) {
 			if (friendRequestListener instanceof FriendRequestListenerArray listeners)
 				listeners.add(listener);
@@ -477,7 +705,12 @@ public class PhotonMessagingListeners implements ConnectionListener, MessageList
 		Objects.requireNonNull(listener, "listener");
 		synchronized (listenersLock) {
 			if (friendRequestListener instanceof FriendRequestListenerArray listeners) {
-				listeners.remove(listener);
+				listeners.removeIf(l -> {
+					if (l instanceof ContextualFriendRequestListener cl)
+						return cl.listener == listener;
+					else
+						return l == listener;
+				});
 				if (listeners.isEmpty())
 					friendRequestListener = null;
 			}

@@ -138,6 +138,9 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 	private int contactSyncGeneration;
 	private final AsyncCache<Id, PhotonContact> contactCache;
 	private final AsyncCache<Id, PhotonConversation> conversationCache;
+	// A receipt can arrive while another device's outbox copy is still being decrypted or stored.
+	private final AsyncCache<Id, MessageDeliveryReceipt> earlyReceipts;
+
 	// Thread-confinement invariant: these collections are accessed ONLY on this verticle's
 	// event-loop context (from sendMessageInternal/sendRpcCall, which public methods reach
 	// via runOnContext, and from the MQTT publish/response handlers which run on the same
@@ -260,6 +263,11 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				.maximumSize(512)
 				.expireAfterAccess(Duration.ofMinutes(5))
 				.build(id -> repository.getConversation(id).map(c -> (PhotonConversation) c));
+
+		this.earlyReceipts = AsyncCache.<Id, MessageDeliveryReceipt>newBuilder()
+				.maximumSize(512)
+				.expireAfterWrite(Duration.ofSeconds(30))
+				.build(id -> Future.succeededFuture(null));
 
 		this.listeners = new PhotonMessagingListeners();
 		this.connected = false;
@@ -1391,12 +1399,17 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			periodicTimer = -1;
 		}
 
-		return disconnect().compose(v -> repository.close());
+		return disconnect().compose(v -> {
+			earlyAcknowledgements.clear();
+			earlyReceipts.synchronous().invalidateAll();
+			return repository.close();
+		});
 	}
 
 	private void periodicCheck(long timer) {
 		contactCache.cleanUp();
 		conversationCache.cleanUp();
+		earlyReceipts.cleanUp();
 	}
 
 	private Future<PhotonConversation> getOrCreateConversation(Id id) {
@@ -2184,13 +2197,13 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 					log.trace("Message {} sent to {}", msg.getId(), msg.getRecipient());
 					// message is sent by this device
 					listeners.onSent(msg);
-
-					yield Future.succeededFuture();
+					yield applyCachedDeliveryReceipt(msg.getId());
 				} else {
 					log.trace("Message {} sent to {} from the other device", msg.getId(), msg.getRecipient());
-					yield repository.putMessage(msg).andThen(ar -> {
-						listeners.onSent(msg);
-					});
+					// Store futures may complete elsewhere; cache access stays on the client context.
+					yield ContextualFuture.onCaller(repository.putMessage(msg))
+							.andThen(ar -> listeners.onSent(msg))
+							.compose(v -> applyCachedDeliveryReceipt(msg.getId()));
 				}
 			}
 
@@ -2396,13 +2409,31 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		};
 	}
 
+	Future<Void> processDeliveryReceipt(MessageDeliveryReceipt receipt) {
+		Id messageId = receipt.getMessageId();
+		// Register before the lookup: an outbox write can finish while that lookup is pending.
+		earlyReceipts.synchronous().asMap().compute(messageId, (id, previous) -> receipt);
+		return ContextualFuture.onCaller(repository.messageExists(messageId))
+				.compose(exists -> exists ? applyCachedDeliveryReceipt(messageId) : Future.succeededFuture());
+	}
+
+	Future<Void> applyCachedDeliveryReceipt(Id messageId) {
+		MessageDeliveryReceipt receipt = earlyReceipts.synchronous().getIfPresent(messageId);
+		if (receipt == null)
+			return Future.succeededFuture();
+
+		// Both paths run on the client context; take the entry before starting the asynchronous update.
+		earlyReceipts.synchronous().invalidate(messageId);
+		return ContextualFuture.onCaller(repository.updateMessageDeliveryStatus(messageId, receipt.getStatus(), receipt.getReason(), receipt.getTimestamp()))
+				.andThen(ar -> listeners.onDeliveryReceipt(receipt));
+	}
+
 	private Future<Void> processHomePeerNotification(Notification notif) {
 		// notification from home peer
 		return switch (notif.getEvent()) {
 			case MESSAGE_DELIVERY_RECEIPT -> {
 				MessageDeliveryReceipt receipt = notif.getBody();
-				yield repository.updateMessageDeliveryStatus(receipt.getMessageId(), receipt.getStatus(), receipt.getReason(), receipt.getTimestamp())
-						.andThen(ar -> listeners.onDeliveryReceipt(receipt));
+				yield processDeliveryReceipt(receipt);
 			}
 
 			case SESSION_NEW -> {

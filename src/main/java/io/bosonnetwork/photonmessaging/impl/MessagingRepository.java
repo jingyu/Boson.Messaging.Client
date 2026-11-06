@@ -103,6 +103,10 @@ class MessagingRepository {
 		return store.updateMessageDeliveryStatus(messageId, status, reason, deliveryAt);
 	}
 
+	public Future<Boolean> messageExists(Id messageId) {
+		return store.getMessage(messageId).map(Objects::nonNull);
+	}
+
 	public Future<List<PhotonMessage<MessageContent>>> getMessagesInRange(Id conversationId, long begin, long end) {
 		return store.getMessagesInRange(conversationId, begin, end).map(this::toMessages);
 	}

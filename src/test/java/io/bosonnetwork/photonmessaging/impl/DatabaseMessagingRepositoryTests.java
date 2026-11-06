@@ -225,6 +225,26 @@ public class DatabaseMessagingRepositoryTests {
 
 	@ParameterizedTest(name = "{0}")
 	@MethodSource("databaseProvider")
+	void testMessageExistenceForDeliveryReceipts(String name, MessagingRepository repo, VertxTestContext context) {
+		Id id = Id.random();
+		PhotonMessage<MessageContent> message = new PhotonMessage<>(id, Id.random(), Message.Type.CONTENT_MESSAGE,
+				System.currentTimeMillis(), MessageContent.text("receipt correlation"));
+		message.setConversationId(message.getRecipient());
+		repo.messageExists(id).compose(exists -> {
+			context.verify(() -> assertFalse(exists));
+			return repo.putMessage(message);
+		}).compose(v -> repo.messageExists(id)).compose(exists -> {
+			context.verify(() -> assertTrue(exists));
+			return repo.updateMessageDeliveryStatus(id, io.bosonnetwork.photonmessaging.DeliveryStatus.RECIPIENT_UNKNOWN, null, 123L);
+		}).compose(v -> repo.removeMessage(message.getRid())).compose(v -> repo.messageExists(id))
+				.onComplete(context.succeeding(exists -> {
+					context.verify(() -> assertFalse(exists));
+					context.completeNow();
+				}));
+	}
+
+	@ParameterizedTest(name = "{0}")
+	@MethodSource("databaseProvider")
 	@Timeout(value = 10, timeUnit = TimeUnit.SECONDS)
 	void testMessageHistory(String name, MessagingRepository repo, VertxTestContext context) {
 		Id convId = Id.random();

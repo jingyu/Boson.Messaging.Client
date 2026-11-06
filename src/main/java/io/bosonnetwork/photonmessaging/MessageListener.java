@@ -24,6 +24,10 @@ package io.bosonnetwork.photonmessaging;
 
 /**
  * Listener for message-related events.
+ * <p>
+ * Events report observed messaging activity. Local persistence is attempted before dispatch where
+ * applicable, but a storage failure does not suppress the event. A callback does not guarantee that
+ * the message or receipt was saved locally.
  */
 public interface MessageListener {
 	/**

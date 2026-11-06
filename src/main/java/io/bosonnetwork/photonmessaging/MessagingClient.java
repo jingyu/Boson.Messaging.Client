@@ -67,7 +67,10 @@ import io.bosonnetwork.photonmessaging.impl.PhotonMessagingClient;
  * <p>
  * <b>Threading.</b> The methods may be called from any thread. The client does its work on its own
  * Vert.x context; a call made on a Vert.x context completes on that context, and a call made from any
- * other thread completes on a Vert.x event loop. Listeners are called on the client's context.
+ * other thread completes on a Vert.x event loop. Listeners registered on a Vert.x context are
+ * dispatched asynchronously on that context; listeners registered without one are called directly
+ * by the client's event processing. Processing completion does not wait for scheduled callbacks.
+ * Removing a listener stops new dispatches; callbacks already scheduled may still run.
  */
 public interface MessagingClient {
 	/**
