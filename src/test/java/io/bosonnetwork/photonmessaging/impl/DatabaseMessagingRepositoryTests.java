@@ -38,6 +38,7 @@ import io.bosonnetwork.Id;
 import io.bosonnetwork.crypto.Random;
 import io.bosonnetwork.photonmessaging.Channel;
 import io.bosonnetwork.photonmessaging.Contact;
+import io.bosonnetwork.photonmessaging.DeliveryStatus;
 import io.bosonnetwork.photonmessaging.FriendRequest;
 import io.bosonnetwork.photonmessaging.Message;
 import io.bosonnetwork.photonmessaging.impl.database.PostgresDatabase;
@@ -241,6 +242,44 @@ public class DatabaseMessagingRepositoryTests {
 					context.verify(() -> assertFalse(exists));
 					context.completeNow();
 				}));
+	}
+
+	@ParameterizedTest(name = "{0}")
+	@MethodSource("databaseProvider")
+	@Timeout(value = 10, timeUnit = TimeUnit.SECONDS)
+	void testStoredReceiptInformationSurvivesMessageLoading(String name, MessagingRepository repo, VertxTestContext context) {
+		Id conversationId = Id.random();
+		long createdAt = System.currentTimeMillis();
+		PhotonMessage<MessageContent> message = new PhotonMessage<>(Id.random(), conversationId, Message.Type.CONTENT_MESSAGE,
+				createdAt, MessageContent.text("stored delivery receipt"));
+		message.setConversationId(conversationId);
+
+		Future<Void> chain = repo.putMessage(message);
+		for (DeliveryStatus status : DeliveryStatus.values()) {
+			String reason = status == DeliveryStatus.UNDELIVERED || status == DeliveryStatus.DELIVERED ? null : status.name();
+			long deliveryAt = status == DeliveryStatus.UNDELIVERED ? 0L : createdAt + status.value();
+			chain = chain.compose(v -> repo.updateMessageDeliveryStatus(message.getId(), status, reason, deliveryAt))
+					.compose(v -> repo.getMessagesBefore(conversationId, createdAt + 1, 10, 0))
+					.compose(messages -> {
+						context.verify(() -> {
+							assertEquals(1, messages.size());
+							assertEquals(message.getId(), messages.get(0).getId());
+							assertEquals(status, messages.get(0).getDeliveryStatus());
+							assertEquals(reason, messages.get(0).getDeliveryReason());
+							assertEquals(deliveryAt, messages.get(0).getDeliveryAt());
+						});
+						return repo.getMessagesInRange(conversationId, createdAt, createdAt + 1);
+					}).map(messages -> {
+						context.verify(() -> {
+							assertEquals(1, messages.size());
+							assertEquals(status, messages.get(0).getDeliveryStatus());
+							assertEquals(reason, messages.get(0).getDeliveryReason());
+							assertEquals(deliveryAt, messages.get(0).getDeliveryAt());
+						});
+						return (Void) null;
+					});
+		}
+		chain.onComplete(context.succeedingThenComplete());
 	}
 
 	@ParameterizedTest(name = "{0}")

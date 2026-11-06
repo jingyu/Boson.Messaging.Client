@@ -368,7 +368,8 @@ class MessagingRepository {
 	private PhotonMessage<MessageContent> toMessage(StoredMessage r) {
 		MessageContent content = r.payload() == null ? MessageContent.EMPTY : MessageContent.parse(r.payload());
 		return new PhotonMessage<>(r.rid(), r.conversationId(), r.version(), r.id(), r.recipient(),
-				Message.Type.valueOf(r.type()), r.from(), r.createdAt(), content, r.sentAt(), r.receivedAt());
+				Message.Type.valueOf(r.type()), r.from(), r.createdAt(), content, r.sentAt(), r.receivedAt(),
+				r.deliveryStatus(), r.deliveryReason(), r.deliveryAt());
 	}
 
 	// Several contact column values (name/remark/tags/notice) are nullable in the schema, but a

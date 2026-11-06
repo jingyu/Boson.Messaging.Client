@@ -103,7 +103,8 @@ public class PhotonMessage<P> implements Message, DeviceOriginated {
 	}
 
 	protected PhotonMessage(long rid, @Nullable Id conversationId, int version, Id id, Id recipient, Type type, @Nullable Id from,
-							long createdAt, P payload, long sentAt, long receivedAt) {
+							long createdAt, P payload, long sentAt, long receivedAt, DeliveryStatus deliveryStatus,
+							@Nullable String deliveryReason, long deliveryAt) {
 		this.rid = rid;
 		this.conversationId = conversationId;
 		this.version = version;
@@ -115,7 +116,9 @@ public class PhotonMessage<P> implements Message, DeviceOriginated {
 		this.payload = payload;
 		this.sentAt = sentAt;
 		this.receivedAt = receivedAt;
-		this.deliveryStatus = DeliveryStatus.UNDELIVERED;
+		this.deliveryStatus = deliveryStatus;
+		this.deliveryReason = deliveryReason;
+		this.deliveryAt = deliveryAt;
 	}
 
 	protected PhotonMessage(PhotonMessage<?> message, P newPayload) {
