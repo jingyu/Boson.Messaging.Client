@@ -69,7 +69,7 @@ class EarlyDeliveryReceiptTests {
 	private Context updateContext;
 	private final List<MessageDeliveryReceipt> received = new ArrayList<>();
 	private Id delayedMessage;
-	private Promise<StoredMessage> lookup;
+	private Promise<Boolean> lookup;
 	private boolean failUpdate;
 	private boolean failPut;
 	private boolean foreignPutCompletion;
@@ -98,8 +98,8 @@ class EarlyDeliveryReceiptTests {
 			}
 
 			@Override
-			public Future<StoredMessage> getMessage(Id id) {
-				return id.equals(delayedMessage) ? lookup.future() : super.getMessage(id);
+			public Future<Boolean> existsMessage(Id id) {
+				return id.equals(delayedMessage) ? lookup.future() : super.existsMessage(id);
 			}
 
 			@Override
@@ -251,7 +251,7 @@ class EarlyDeliveryReceiptTests {
 							assertFalse(first.isComplete());
 							assertEquals(1, received.size());
 						});
-						lookup.complete(null);
+						lookup.complete(false);
 						return first;
 					}).compose(v -> client.applyCachedDeliveryReceipt(id)).compose(v -> drainListeners()).map(v -> {
 						context.verify(() -> {
@@ -276,7 +276,7 @@ class EarlyDeliveryReceiptTests {
 					assertFalse(pending.isComplete());
 					assertEquals(List.of(known), received.stream().map(MessageDeliveryReceipt::getMessageId).toList());
 				});
-				lookup.complete(null);
+				lookup.complete(false);
 				return (Void) null;
 			}).compose(v -> pending);
 		})).onComplete(context.succeedingThenComplete());
@@ -290,7 +290,7 @@ class EarlyDeliveryReceiptTests {
 		StoredMessage message = row(id);
 		run(() -> store.putMessage(message).compose(rid -> {
 			Future<Void> processing = client.processDeliveryReceipt(receipt(id));
-			CompletableFuture.runAsync(() -> lookup.complete(message));
+			CompletableFuture.runAsync(() -> lookup.complete(true));
 			return processing;
 		}).compose(v -> awaitReceipt()).map(v -> {
 			context.verify(() -> {

@@ -382,6 +382,18 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 	}
 
 	@Override
+	public Future<Boolean> existsMessage(Id messageId) {
+		return withConnection(c ->
+				forQuery(c, getDialect().existsMessage())
+						.execute(Map.of("id", messageId.bytesUnsafe()))
+						.map(this::findBoolean)
+		).recover(e -> {
+			getLogger().error("Failed to check message {} existence", messageId, e);
+			return Future.failedFuture(new RepositoryException(e));
+		});
+	}
+
+	@Override
 	public Future<List<StoredMessage>> getMessagesInRange(Id conversationId, long begin, long end) {
 		return withConnection(c ->
 				forQuery(c, getDialect().selectMessagesByTimeRange())

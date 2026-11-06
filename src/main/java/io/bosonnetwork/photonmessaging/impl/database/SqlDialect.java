@@ -228,6 +228,10 @@ public class SqlDialect {
 		return "SELECT * FROM messages WHERE id = #{id}";
 	}
 
+	public String existsMessage() {
+		return "SELECT EXISTS(SELECT 1 FROM messages WHERE id = #{id})";
+	}
+
 	public String selectMessagesByTimeRange() {
 		return """
 				SELECT * FROM messages

@@ -195,12 +195,22 @@ public interface MessagingStore {
 	Future<Void> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String deliveryReason, long deliveryAt);
 
 	/**
-	 * Looks up a message by application ID for validating an incoming outcome.
+	 * Looks up a message by application ID.
 	 *
 	 * @param messageId the application ID of the message to retrieve
 	 * @return a future containing the stored message, or null if no message is found
 	 */
 	Future<@Nullable StoredMessage> getMessage(Id messageId);
+
+	/**
+	 * Checks whether a message exists. Stores may override this to avoid loading message data.
+	 *
+	 * @param messageId the application-level id of the message
+	 * @return a future with {@code true} if the message exists, {@code false} otherwise
+	 */
+	default Future<Boolean> existsMessage(Id messageId) {
+		return getMessage(messageId).map(message -> message != null);
+	}
 
 	/**
 	 * Retrieves the messages of a conversation within a time range, ordered by {@code rid} ascending.

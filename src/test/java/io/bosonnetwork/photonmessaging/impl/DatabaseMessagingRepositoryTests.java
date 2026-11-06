@@ -224,6 +224,28 @@ public class DatabaseMessagingRepositoryTests {
 		return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
 	}
 
+	@Test
+	void messageExistenceDoesNotLoadStoredMessages(Vertx vertx) throws Exception {
+		DatabaseStore store = new SqliteDatabase("jdbc:sqlite:" + testDir.resolve("message-existence.db"), 1) {
+			@Override
+			public Future<StoredMessage> getMessage(Id messageId) {
+				return Future.failedFuture(new AssertionError("Message existence must not load the stored message"));
+			}
+		};
+		MessagingRepository repo = new MessagingRepository(store);
+		try {
+			await(repo.initialize(vertx, null, c -> null));
+			PhotonMessage<MessageContent> message = randomMessage(Id.random());
+			assertFalse(await(repo.messageExists(message.getId())));
+			await(repo.putMessage(message));
+			assertTrue(await(repo.messageExists(message.getId())));
+			await(repo.removeMessage(message.getRid()));
+			assertFalse(await(repo.messageExists(message.getId())));
+		} finally {
+			await(repo.close());
+		}
+	}
+
 	@ParameterizedTest(name = "{0}")
 	@MethodSource("databaseProvider")
 	void testMessageExistenceForDeliveryReceipts(String name, MessagingRepository repo, VertxTestContext context) {

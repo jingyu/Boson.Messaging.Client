@@ -104,7 +104,7 @@ class MessagingRepository {
 	}
 
 	public Future<Boolean> messageExists(Id messageId) {
-		return store.getMessage(messageId).map(Objects::nonNull);
+		return store.existsMessage(messageId);
 	}
 
 	public Future<List<PhotonMessage<MessageContent>>> getMessagesInRange(Id conversationId, long begin, long end) {
