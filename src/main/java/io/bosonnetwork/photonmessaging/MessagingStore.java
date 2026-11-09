@@ -190,9 +190,9 @@ public interface MessagingStore {
 	 * @param status the delivery status to set
 	 * @param deliveryReason the reason associated with the delivery status
 	 * @param deliveryAt the timestamp representing when the delivery occurred
-	 * @return a future that completes when the delivery status update has been processed
+	 * @return a future with the updated message's conversation ID, or null if the message no longer exists
 	 */
-	Future<Void> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String deliveryReason, long deliveryAt);
+	Future<@Nullable Id> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String deliveryReason, long deliveryAt);
 
 	/**
 	 * Looks up a message by application ID.

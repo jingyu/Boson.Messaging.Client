@@ -279,16 +279,25 @@ public class PhotonMessage<P> implements Message, DeviceOriginated {
 		return payload;
 	}
 
+	@Override
 	public DeliveryStatus getDeliveryStatus() {
 		return deliveryStatus;
 	}
 
+	@Override
 	public @Nullable String getDeliveryReason() {
 		return deliveryReason;
 	}
 
+	@Override
 	public long getDeliveryAt() {
 		return deliveryAt;
+	}
+
+	void updateDeliveryStatus(DeliveryStatus status, @Nullable String reason, long deliveryAt) {
+		this.deliveryStatus = status;
+		this.deliveryReason = reason;
+		this.deliveryAt = deliveryAt;
 	}
 
 	protected void prepareForSending() {

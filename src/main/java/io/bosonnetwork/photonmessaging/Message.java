@@ -167,6 +167,30 @@ public interface Message {
 	long getSentAt();
 
 	/**
+	 * Returns the last known delivery status reported by the service.
+	 * <p>
+	 * {@link DeliveryStatus#UNDELIVERED} with a zero {@link #getDeliveryAt()} means no receipt
+	 * has been recorded. Home-service acceptance alone does not establish delivery to the recipient.
+	 *
+	 * @return the delivery status
+	 */
+	DeliveryStatus getDeliveryStatus();
+
+	/**
+	 * Returns the optional explanation attached to the delivery receipt.
+	 *
+	 * @return the receipt reason, or null when none was supplied
+	 */
+	@Nullable String getDeliveryReason();
+
+	/**
+	 * Returns the service-generated delivery receipt timestamp.
+	 *
+	 * @return milliseconds since the epoch, or zero when no receipt has been recorded
+	 */
+	long getDeliveryAt();
+
+	/**
 	 * Retrieves the binary payload of this message.
 	 * The payload contains the raw data associated with the message,
 	 * which may represent text, media, or other types of content depending on the context.

@@ -439,18 +439,20 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 	public ContextualFuture<List<Conversation>> getConversations() {
 		runningCheck();
 
-		Future<List<Conversation>> future = repository.getAllConversations().map(convs -> {
+		Future<List<Conversation>> future = callOnContext(() -> ContextualFuture.onCaller(repository.getAllConversations()).map(convs -> {
 			// keep the order, overlay the cached conversations
 			Map<Id, Conversation> conversations = new LinkedHashMap<>();
 			for (Conversation c : convs) {
-				PhotonConversation cached = conversationCache.synchronous().asMap()
-						.compute(c.getId(), (k, cc) -> cc != null ? cc : (PhotonConversation) c);
-				conversations.put(c.getId(), Objects.requireNonNull(cached));
+				PhotonConversation cached = Objects.requireNonNull(conversationCache.synchronous().asMap()
+						.compute(c.getId(), (k, cc) -> cc != null ? cc : (PhotonConversation) c));
+				if (cached != c)
+					c.getLastMessage().ifPresent(cached::refreshDeliveryStatus);
+				conversations.put(c.getId(), cached);
 			}
 
 			// Return a **mutable** list
 			return new ArrayList<>(conversations.values());
-		});
+		}));
 
 		return ContextualFuture.ofCaller(future);
 	}
@@ -2425,7 +2427,14 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		// Both paths run on the client context; take the entry before starting the asynchronous update.
 		earlyReceipts.synchronous().invalidate(messageId);
 		return ContextualFuture.onCaller(repository.updateMessageDeliveryStatus(messageId, receipt.getStatus(), receipt.getReason(), receipt.getTimestamp()))
-				.andThen(ar -> listeners.onDeliveryReceipt(receipt));
+				.andThen(ar -> {
+					if (ar.succeeded() && ar.result() != null) {
+						PhotonConversation conversation = conversationCache.synchronous().getIfPresent(ar.result());
+						if (conversation != null)
+							conversation.updateDeliveryStatus(receipt);
+					}
+					listeners.onDeliveryReceipt(receipt);
+				}).mapEmpty();
 	}
 
 	private Future<Void> processHomePeerNotification(Notification notif) {

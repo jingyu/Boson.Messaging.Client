@@ -54,21 +54,19 @@ public interface Conversation extends Comparable<Conversation> {
 	boolean isChannel();
 
 	/**
+	 * Returns the most recent message, including its last known delivery outcome.
+	 *
+	 * @return the latest message, or empty when the conversation has no message
+	 */
+	Optional<Message> getLastMessage();
+
+	/**
 	 * Returns a short text preview of the most recent message or activity in the conversation.
 	 *
 	 * @return an {@link Optional} holding the preview text, or an empty {@code Optional} if the
 	 *         conversation has no message to preview yet.
 	 */
 	Optional<String> getPreview();
-
-	/**
-	 * Returns the terminal delivery outcome attached to the most recent message, if any.
-	 *
-	 * @return the latest message's failure, or empty
-	 */
-	default Optional<MessageDeliveryReceipt> getDeliveryFailure() {
-		return Optional.empty();
-	}
 
 	/**
 	 * Returns the timestamp of when the conversation was last updated.

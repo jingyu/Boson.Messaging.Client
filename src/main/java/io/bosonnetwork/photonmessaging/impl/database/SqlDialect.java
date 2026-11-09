@@ -221,6 +221,7 @@ public class SqlDialect {
 					delivery_reason = #{deliveryReason},
 					delivery_at = #{deliveryAt}
 				WHERE id = #{id}
+				RETURNING conversation_id
 				""";
 	}
 

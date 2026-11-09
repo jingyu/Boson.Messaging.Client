@@ -103,7 +103,7 @@ class EarlyDeliveryReceiptTests {
 			}
 
 			@Override
-			public Future<Void> updateMessageDeliveryStatus(Id id, DeliveryStatus status, String reason, long date) {
+			public Future<Id> updateMessageDeliveryStatus(Id id, DeliveryStatus status, String reason, long date) {
 				updates++;
 				updateContext = Vertx.currentContext();
 				return failUpdate ? Future.failedFuture("status write failed") :
@@ -306,6 +306,27 @@ class EarlyDeliveryReceiptTests {
 		Id id = Id.random();
 		run(() -> client.processDeliveryReceipt(receipt(id)).compose(v -> drainListeners()).compose(v -> store.getMessage(id)).map(saved -> {
 			context.verify(() -> { assertNull(saved); assertEquals(0, updates); assertTrue(received.isEmpty()); });
+			return (Void) null;
+		})).onComplete(context.succeedingThenComplete());
+	}
+
+	@Test
+	void messageDeletedDuringLookupStillCompletesReceiptNotification(VertxTestContext context) {
+		Id id = Id.random();
+		delayedMessage = id;
+		lookup = Promise.promise();
+		run(() -> store.putMessage(row(id)).compose(rid -> {
+			Future<Void> processing = client.processDeliveryReceipt(receipt(id));
+			return store.removeMessages(List.of(rid)).compose(removed -> {
+				lookup.complete(true);
+				return processing;
+			});
+		}).compose(v -> awaitReceipt()).compose(v -> store.getMessage(id)).map(saved -> {
+			context.verify(() -> {
+				assertNull(saved);
+				assertEquals(1, updates);
+				assertEquals(1, received.size());
+			});
 			return (Void) null;
 		})).onComplete(context.succeedingThenComplete());
 	}

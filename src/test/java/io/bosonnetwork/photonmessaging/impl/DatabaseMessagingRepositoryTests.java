@@ -225,7 +225,7 @@ public class DatabaseMessagingRepositoryTests {
 	}
 
 	@Test
-	void messageExistenceDoesNotLoadStoredMessages(Vertx vertx) throws Exception {
+	void messageExistenceAndReceiptUpdatesDoNotLoadStoredMessages(Vertx vertx) throws Exception {
 		DatabaseStore store = new SqliteDatabase("jdbc:sqlite:" + testDir.resolve("message-existence.db"), 1) {
 			@Override
 			public Future<StoredMessage> getMessage(Id messageId) {
@@ -239,6 +239,8 @@ public class DatabaseMessagingRepositoryTests {
 			assertFalse(await(repo.messageExists(message.getId())));
 			await(repo.putMessage(message));
 			assertTrue(await(repo.messageExists(message.getId())));
+			assertEquals(message.getConversationId().orElseThrow(),
+					await(repo.updateMessageDeliveryStatus(message.getId(), DeliveryStatus.DELIVERED, null, 123L)));
 			await(repo.removeMessage(message.getRid()));
 			assertFalse(await(repo.messageExists(message.getId())));
 		} finally {
@@ -268,6 +270,29 @@ public class DatabaseMessagingRepositoryTests {
 
 	@ParameterizedTest(name = "{0}")
 	@MethodSource("databaseProvider")
+	void deliveryStatusUpdateReturnsConversationIdOrNullForMissingMessage(String name, MessagingRepository repo,
+			VertxTestContext context) {
+		Id conversationId = Id.random();
+		PhotonMessage<MessageContent> message = new PhotonMessage<>(Id.random(), Id.random(), Message.Type.CONTENT_MESSAGE,
+				System.currentTimeMillis(), MessageContent.text("receipt update"));
+		message.setConversationId(conversationId);
+
+		repo.updateMessageDeliveryStatus(message.getId(), DeliveryStatus.EXPIRED, null, 123L).compose(id -> {
+			context.verify(() -> assertNull(id));
+			return repo.putMessage(message);
+		}).compose(v -> repo.updateMessageDeliveryStatus(message.getId(), DeliveryStatus.EXPIRED, "expired", 123L))
+				.compose(id -> {
+					context.verify(() -> assertEquals(conversationId, id));
+					return repo.removeMessage(message.getRid());
+				}).compose(v -> repo.updateMessageDeliveryStatus(message.getId(), DeliveryStatus.DELIVERED, null, 456L))
+				.onComplete(context.succeeding(id -> {
+					context.verify(() -> assertNull(id));
+					context.completeNow();
+				}));
+	}
+
+	@ParameterizedTest(name = "{0}")
+	@MethodSource("databaseProvider")
 	@Timeout(value = 10, timeUnit = TimeUnit.SECONDS)
 	void testStoredReceiptInformationSurvivesMessageLoading(String name, MessagingRepository repo, VertxTestContext context) {
 		Id conversationId = Id.random();
@@ -285,18 +310,20 @@ public class DatabaseMessagingRepositoryTests {
 					.compose(messages -> {
 						context.verify(() -> {
 							assertEquals(1, messages.size());
-							assertEquals(message.getId(), messages.get(0).getId());
-							assertEquals(status, messages.get(0).getDeliveryStatus());
-							assertEquals(reason, messages.get(0).getDeliveryReason());
-							assertEquals(deliveryAt, messages.get(0).getDeliveryAt());
+							Message loaded = messages.get(0);
+							assertEquals(message.getId(), loaded.getId());
+							assertEquals(status, loaded.getDeliveryStatus());
+							assertEquals(reason, loaded.getDeliveryReason());
+							assertEquals(deliveryAt, loaded.getDeliveryAt());
 						});
 						return repo.getMessagesInRange(conversationId, createdAt, createdAt + 1);
 					}).map(messages -> {
 						context.verify(() -> {
 							assertEquals(1, messages.size());
-							assertEquals(status, messages.get(0).getDeliveryStatus());
-							assertEquals(reason, messages.get(0).getDeliveryReason());
-							assertEquals(deliveryAt, messages.get(0).getDeliveryAt());
+							Message loaded = messages.get(0);
+							assertEquals(status, loaded.getDeliveryStatus());
+							assertEquals(reason, loaded.getDeliveryReason());
+							assertEquals(deliveryAt, loaded.getDeliveryAt());
 						});
 						return (Void) null;
 					});

@@ -68,6 +68,11 @@ public class PhotonConversation implements Conversation {
 	}
 
 	@Override
+	public Optional<Message> getLastMessage() {
+		return Optional.ofNullable(lastMessage);
+	}
+
+	@Override
 	public Optional<String> getPreview() {
 		String snippet = preview;
 		if (snippet == null && lastMessage != null) {
@@ -98,11 +103,6 @@ public class PhotonConversation implements Conversation {
 	}
 
 	@Override
-	public Optional<MessageDeliveryReceipt> getDeliveryFailure() {
-		return lastMessage == null ? Optional.empty() : lastMessage.getDeliveryFailure();
-	}
-
-	@Override
 	public long getUpdatedAt() {
 		return lastMessage != null ? lastMessage.getReceivedAt() : 0;
 	}
@@ -112,8 +112,26 @@ public class PhotonConversation implements Conversation {
 		if (message.getConversationId().map(convId -> !convId.equals(contact.getId())).orElse(true))
 			throw new IllegalArgumentException("Message does not match the conversation");
 
+		// A delayed echo or send completion must not erase a receipt for the same message.
+		if (message instanceof PhotonMessage<?> updated && lastMessage != null &&
+				message.getId().equals(lastMessage.getId()) && lastMessage.getDeliveryAt() > message.getDeliveryAt()) {
+			updated.updateDeliveryStatus(lastMessage.getDeliveryStatus(),
+					lastMessage.getDeliveryReason(), lastMessage.getDeliveryAt());
+		}
+
 		this.lastMessage = message;
 		this.preview = null;
+	}
+
+	void updateDeliveryStatus(MessageDeliveryReceipt receipt) {
+		if (lastMessage instanceof PhotonMessage<?> message && message.getId().equals(receipt.getMessageId()))
+			message.updateDeliveryStatus(receipt.getStatus(), receipt.getReason(), receipt.getTimestamp());
+	}
+
+	void refreshDeliveryStatus(Message stored) {
+		if (lastMessage instanceof PhotonMessage<?> message && message.getId().equals(stored.getId()) &&
+				stored.getDeliveryAt() > message.getDeliveryAt())
+			message.updateDeliveryStatus(stored.getDeliveryStatus(), stored.getDeliveryReason(), stored.getDeliveryAt());
 	}
 
 	protected SessionContext getSessionContext() {

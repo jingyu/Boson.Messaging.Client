@@ -99,7 +99,7 @@ class MessagingRepository {
 		return store.updateMessageSentTime(message.getId(), message.getSentAt());
 	}
 
-	public Future<Void> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String reason, long deliveryAt) {
+	public Future<@Nullable Id> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String reason, long deliveryAt) {
 		return store.updateMessageDeliveryStatus(messageId, status, reason, deliveryAt);
 	}
 

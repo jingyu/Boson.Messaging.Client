@@ -352,7 +352,7 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 	}
 
 	@Override
-	public Future<Void> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String deliveryReason, long deliveryAt) {
+	public Future<@Nullable Id> updateMessageDeliveryStatus(Id messageId, DeliveryStatus status, @Nullable String deliveryReason, long deliveryAt) {
 		Map<String, Object> params = new HashMap<>();
 		params.put("id", messageId.bytesUnsafe());
 		params.put("deliveryStatus", status.value());
@@ -360,13 +360,13 @@ public abstract class DatabaseStore implements VertxDatabase, MessagingStore {
 		params.put("deliveryAt", deliveryAt);
 
 		return withTransaction(c ->
-				forUpdate(c, getDialect().updateMessageDeliveryStatus())
+				forQuery(c, getDialect().updateMessageDeliveryStatus())
 						.execute(params)
-						.<Void>mapEmpty()
+						.<@Nullable Id>map(rows -> findUnique(rows, row -> Objects.requireNonNull(getId(row, "conversation_id"))))
 		).recover(e -> {
 			getLogger().error("Failed to update message delivery status for {}", messageId, e);
 			return Future.failedFuture(new RepositoryException(e));
-		});
+		}).<@Nullable Id>map(id -> id);
 	}
 
 	@Override
