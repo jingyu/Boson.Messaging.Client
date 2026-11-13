@@ -137,6 +137,8 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 	private Future<Void> contactSyncChain = Future.succeededFuture();
 	private int contactSyncGeneration;
 	private final AsyncCache<Id, PhotonContact> contactCache;
+	// Removed channel metadata is only for delayed leave notifications, never ordinary lookups.
+	private final AsyncCache<Id, RelicChannel> relicChannelCache;
 	private final AsyncCache<Id, PhotonConversation> conversationCache;
 	// A receipt can arrive while another device's outbox copy is still being decrypted or stored.
 	private final AsyncCache<Id, MessageDeliveryReceipt> earlyReceipts;
@@ -258,6 +260,11 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				.maximumSize(512)
 				.expireAfterAccess(Duration.ofMinutes(5))
 				.build(id -> repository.getContact(id).map(c -> (PhotonContact) c));
+
+		this.relicChannelCache = AsyncCache.<Id, RelicChannel>newBuilder()
+				.maximumSize(512)
+				.expireAfterWrite(Duration.ofMinutes(1))
+				.build(id -> Future.succeededFuture(null));
 
 		this.conversationCache = AsyncCache.<Id, PhotonConversation>newBuilder()
 				.maximumSize(512)
@@ -1404,12 +1411,14 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		return disconnect().compose(v -> {
 			earlyAcknowledgements.clear();
 			earlyReceipts.synchronous().invalidateAll();
+			relicChannelCache.synchronous().invalidateAll();
 			return repository.close();
 		});
 	}
 
 	private void periodicCheck(long timer) {
 		contactCache.cleanUp();
+		relicChannelCache.cleanUp();
 		conversationCache.cleanUp();
 		earlyReceipts.cleanUp();
 	}
@@ -2156,26 +2165,48 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			if (from.equals(homePeerId))
 				return processHomePeerNotification(notif);
 
-			// Notification from channel?
 			return channel(from).compose(channel -> {
-				if (channel == null) {
-					if (notif.getEvent() == Notification.Event.CHANNEL_JOIN) {
-						// channel join notification is a special case: no channel contact existing
-						ChannelInfo ci = notif.getBody();
-						if (ci.sessionKey() == null) {
-							log.error("Received a channel join notification without sessionKey from {}, ignored", from);
-							return Future.succeededFuture();
-						}
-
-						// The session key is encrypted with the user's own key; no external decryption needed.
-						channel = new PhotonChannel(ci.channelId(), ci.sessionKey(), ci.ownerId(),
-								ci.permission(), ci.name(), ci.notice(), ci.announce(), ci.createdAt(), ci.updateAt());
-					} else {
-						log.warn("Received a notification from unknown channel {}, ignored - {}", message.getRecipient(), notif);
+				if (channel == null && notif.getEvent() == Notification.Event.CHANNEL_JOIN) {
+					// Create the new channel object for the new joined channel
+					// channel join notification is a special case: no channel contact existing
+					ChannelInfo ci = notif.getBody();
+					if (ci.sessionKey() == null) {
+						log.error("Received a channel join notification without sessionKey from {}, ignored", from);
 						return Future.succeededFuture();
 					}
+
+					// The session key is encrypted with the user's own key; no external decryption needed.
+					PhotonChannel ch = new PhotonChannel(ci.channelId(), ci.sessionKey(), ci.ownerId(),
+							ci.permission(), ci.name(), ci.notice(), ci.announce(), ci.createdAt(), ci.updateAt());
+					return Future.succeededFuture(ch);
 				}
-				return processChannelNotification(channel, notif);
+
+				if (notif.getEvent() == Notification.Event.CHANNEL_LEAVE) {
+					// Try to acquire the relic channel object if exists
+
+					// A store removal can finish before its sync continuation installs the relic. Finish the
+					// already queued contact syncs before deciding whether this notification needs live state.
+					return ContextualFuture.onCaller(contactSyncChain).map(v -> {
+						RelicChannel relic = relicChannelCache.synchronous().getIfPresent(from);
+						if (relic != null && relic.notificationId == null) {
+							relic.notificationId = notif.getId();
+							return relic.channel;
+						} else if (relic != null && Objects.equals(relic.notificationId, notif.getId())) {
+							return null;
+						} else {
+							return channel;
+						}
+					});
+				}
+
+				return Future.succeededFuture(channel);
+			}).compose(channel -> {
+				if (channel == null) {
+					log.warn("Received a notification from unknown channel {}, ignored - {}", from, notif);
+					return Future.succeededFuture();
+				} else {
+					return processChannelNotification(channel, notif);
+				}
 			});
 		}
 
@@ -2509,6 +2540,28 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		};
 	}
 
+	private static class RelicChannel {
+		private final PhotonChannel channel;
+		private @Nullable Id notificationId;
+
+		private RelicChannel(PhotonChannel channel) {
+			this.channel = channel;
+		}
+	}
+
+	private void retainRelicChannel(PhotonChannel channel, @Nullable Id notificationId) {
+		relicChannelCache.synchronous().asMap().compute(channel.getId(), (id, relic) -> {
+			if (relic == null || relic.channel.getRevision() != channel.getRevision()) {
+				channel.setRelic(true);
+				relic = new RelicChannel(channel);
+			}
+
+			if (notificationId != null)
+				relic.notificationId = notificationId;
+			return relic;
+		});
+	}
+
 	private Future<Void> processChannelNotification(PhotonChannel channel, Notification notif) {
 		return switch (notif.getEvent()) {
 			case CHANNEL_DELETE -> {
@@ -2554,10 +2607,14 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 
 			case CHANNEL_LEAVE -> {
 				log.trace("Channel {} left", channel.getId());
-				yield repository.removeContactLocally(channel.getId()).andThen(ar -> {
+				if (channel.isRelic()) {
+					listeners.onLeftChannel(channel);
+					yield Future.succeededFuture();
+				}
+
+				yield ContextualFuture.onCaller(repository.removeContactLocally(channel.getId())).andThen(ar -> {
+					retainRelicChannel(channel, notif.getId());
 					contactCache.synchronous().invalidate(channel.getId());
-					if (ar.succeeded() && !ar.result())
-						log.warn("!!! Channel contact {} should exists, but failed to remove.", channel.getId());
 
 					listeners.onLeftChannel(channel);
 				}).mapEmpty();
@@ -2879,7 +2936,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 		return repository.getAllContacts().compose(device -> {
 			SnapshotChanges changes = snapshotChanges(device, snapshot);
 			Future<?> removal = changes.removed().isEmpty() ? Future.succeededFuture() :
-					repository.removeContacts(localRevision, changes.removed());
+					removeSyncedContacts(localRevision, changes.removed());
 
 			return removal.compose(v -> repository.putContacts(revision, snapshot)).onSuccess(v -> {
 				contactsRevision = revision;
@@ -3056,6 +3113,17 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 				.compose(contactSync -> applyContactSync(contactSync, false));
 	}
 
+	private Future<Boolean> removeSyncedContacts(int revision, List<Id> contactIds) {
+		// Read before deleting so even an uncached channel can supply its final notification.
+		return ContextualFuture.onCaller(repository.getContacts(contactIds).compose(contacts ->
+				repository.removeContacts(revision, contactIds).onSuccess(removed -> {
+					for (Contact contact : contacts) {
+						if (contact instanceof PhotonChannel channel)
+							retainRelicChannel(channel, null);
+					}
+				})));
+	}
+
 	private Future<Void> applyContactMutation(ContactMutation mutation) {
 		final int revision = mutation.getRevision() + 1;
 		return switch (mutation.getOp()) {
@@ -3099,7 +3167,7 @@ public class PhotonMessagingClient extends BosonVerticle implements MessagingCli
 			case REMOVE -> {
 				List<Id> contactIds = Objects.requireNonNull(mutation.getData());
 				log.trace("Applying contact mutation(base rev {}): remove {}", mutation.getRevision(), contactIds);
-				yield (Future<Void>) repository.removeContacts(revision, contactIds).<@Nullable Void>map(removed -> {
+				yield (Future<Void>) removeSyncedContacts(revision, contactIds).<@Nullable Void>map(removed -> {
 					advanceContactsRevision(revision);
 					contactCache.synchronous().invalidateAll(contactIds);
 					if (removed)

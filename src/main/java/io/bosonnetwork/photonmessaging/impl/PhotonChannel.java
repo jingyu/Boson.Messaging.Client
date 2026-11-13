@@ -90,6 +90,8 @@ public class PhotonChannel extends PhotonContact implements Channel {
 	// channel's lock.
 	private int membersEpoch;
 
+	private boolean relic;
+
 	// Constructor for database OR mapping
 	protected PhotonChannel(Id id, byte[] sessionKey, Id ownerId, Permission permission, String name, @Nullable String notice,
 	                        boolean announce, @Nullable String remark, @Nullable String tags, boolean muted, boolean blocked,
@@ -275,6 +277,14 @@ public class PhotonChannel extends PhotonContact implements Channel {
 			throw new IllegalStateException("Members not loaded");
 
 		return members;
+	}
+
+	void setRelic(boolean relic) {
+		this.relic = relic;
+	}
+
+	boolean isRelic() {
+		return relic;
 	}
 
 	@Override
